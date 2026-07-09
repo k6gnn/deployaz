@@ -1,0 +1,19 @@
+# Requires kube-prometheus-stack's CRDs to be installed first (see docs/PHASE1_SETUP.md).
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: deployaz-demo
+  namespace: deployaz-demo
+  labels:
+    release: kube-prometheus-stack   # must match the Helm release name so Prometheus picks it up
+spec:
+  selector:
+    matchLabels:
+      app: deployaz-demo
+  namespaceSelector:
+    matchNames:
+      - deployaz-demo
+  endpoints:
+    - port: http
+      path: /actuator/prometheus
+      interval: 15s
