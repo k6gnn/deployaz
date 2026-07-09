@@ -22,7 +22,7 @@ spec:
       containers:
         - name: deployaz-demo
           # CI overwrites this tag on every push to main — do not hand-edit the tag.
-          image: ghcr.io/OWNER/deployaz-demo:latest
+          image: ghcr.io/k6gnn/deployaz-demo:latest
           ports:
             - containerPort: 8080
           resources:

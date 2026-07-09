@@ -7,7 +7,7 @@ spec:
   project: default
   source:
     # Replace with your actual repo URL once pushed to GitHub.
-    repoURL: https://github.com/OWNER/deployaz-platform.git
+    repoURL: https://github.com/k6gnn/deployaz.git
     targetRevision: main
     path: k8s/base
   destination:

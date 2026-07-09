@@ -14,23 +14,19 @@ URL. That's the tradeoff of starting local. Move to EKS later for that.
   git history)
 
 ## 1. Push this repo to GitHub
+Repo: https://github.com/k6gnn/deployaz.git — placeholders in this repo are
+already set to `k6gnn`/`deployaz`, no find-and-replace needed.
+
 ```bash
 cd deployaz-platform
 git init
 git add .
 git commit -m "chore: phase 1 scaffold"
-gh repo create deployaz-platform --public --source=. --push
-# or manually: create the repo on github.com, then
-# git remote add origin https://github.com/<you>/deployaz-platform.git
-# git push -u origin main
+git remote add origin https://github.com/k6gnn/deployaz.git
+git push -u origin main
 ```
 
-Then replace every `OWNER` placeholder with your actual GitHub username in:
-- `.github/workflows/ci-cd.yml`
-- `k8s/base/deployment.yaml`
-- `gitops/argocd-application.yaml`
-
-Commit and push that change. This push triggers the CI pipeline, which will
+This push triggers the CI pipeline, which will
 build the image, push it to GHCR, and commit the new tag back into
 `k8s/base/deployment.yaml`. Check the Actions tab — confirm it went green
 before continuing.
