@@ -58,11 +58,15 @@ jobs:
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
 
-      - name: Update GitOps manifest with new image tag
+      - name: Update GitOps manifests with new image tag
         run: |
+          # Both tenants run the same image (tenant-b is synthetic, proving platform
+          # isolation rather than app diversity) -- so both deployment manifests need
+          # the tag bump, or tenant-b silently stops getting updates after this point.
           sed -i "s|image: .*deployaz-demo:.*|image: ${REGISTRY}/${IMAGE_NAME}:${{ github.sha }}|" k8s/base/deployment.yaml
+          sed -i "s|image: .*deployaz-demo:.*|image: ${REGISTRY}/${IMAGE_NAME}:${{ github.sha }}|" k8s/tenants/tenant-b/deployment.yaml
           git config user.name "deployaz-ci"
           git config user.email "ci@deployaz.local"
-          git add k8s/base/deployment.yaml
+          git add k8s/base/deployment.yaml k8s/tenants/tenant-b/deployment.yaml
           git diff --cached --quiet || git commit -m "ci: bump image to ${{ github.sha }}"
           git push
