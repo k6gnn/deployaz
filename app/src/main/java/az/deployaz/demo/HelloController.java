@@ -12,7 +12,7 @@ public class HelloController {
     @GetMapping("/api/hello")
     public Map<String, Object> hello() {
         return Map.of(
-                "message", "DeployAZ Phase 1 is alive",
+                "message", "DeployAZ Phase check is alive",
                 "timestamp", Instant.now().toString()
         );
     }
