@@ -50,16 +50,14 @@ No `kubectl apply` on tenant resources directly.
 ### 1. RBAC boundary
 Tenant A's service account should have zero visibility into tenant B's namespace:
 ```
-kubectl auth can-i list pods -n deployaz-tenant-b \
-  --as=system:serviceaccount:deployaz-demo:tenant-a-sa
+kubectl auth can-i list pods -n deployaz-tenant-b --as=system:serviceaccount:deployaz-demo:tenant-a-sa
 ```
 Expected: `no`. If this returns `yes`, the Role/RoleBinding scoping is broken.
 
 ### 2. Network boundary
 Exec into a tenant-a pod and try to reach tenant-b's service:
 ```
-kubectl exec -n deployaz-demo deploy/deployaz-demo -it -- \
-  curl -m 3 http://deployaz-tenant-b.deployaz-tenant-b.svc.cluster.local
+kubectl exec -n deployaz-demo deploy/deployaz-demo -it -- curl -m 3 http://deployaz-tenant-b.deployaz-tenant-b.svc.cluster.local
 ```
 Expected: timeout / connection refused (blocked by `default-deny-all` +
 the fact that tenant-b's allow-ingress rule only permits traffic from the
