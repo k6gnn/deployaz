@@ -23,7 +23,7 @@ spec:
         - name: deployaz-tenant-b
           # Same image as tenant-a -- this is a synthetic second tenant proving the
           # PLATFORM's isolation, not a different app. CI updates this tag too (see ci-cd.yml).
-          image: ghcr.io/k6gnn/deployaz-demo:41241156e00101b9b79b07be029a754f50d1491f
+          image: ghcr.io/k6gnn/deployaz-demo:ae7bd795b8de0f9fb1f6429015cb175f11d09bf6
           ports:
             - containerPort: 8080
           resources:
