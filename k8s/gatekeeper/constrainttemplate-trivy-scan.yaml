@@ -1,0 +1,54 @@
+# Install Gatekeeper itself first (not included here -- it's a full
+# controller with its own CRDs and webhook, installed once cluster-wide):
+#   helm repo add gatekeeper https://open-policy-agent.github.io/gatekeeper/charts
+#   helm install gatekeeper gatekeeper/gatekeeper --namespace gatekeeper-system --create-namespace
+#
+# This file defines the policy itself: a Deployment is only admitted if its
+# pod template carries security.deployaz.io/trivy-scan-passed: "true" AND
+# security.deployaz.io/scanned-sha matches the SHA embedded in its image tag.
+#
+# LIMITATION, stated plainly: this trusts an annotation the CI pipeline
+# wrote -- it is not a cryptographic attestation. Someone with kubectl access
+# to hand-edit a Deployment (or a compromised CI token) could set the
+# annotation without a real scan having happened. The real production
+# hardening step is image signing (cosign) with Gatekeeper/Kyverno verifying
+# the signature against the registry directly, independent of any
+# self-reported field. That's out of scope for this phase but is the
+# documented next step, not a blind spot being hidden.
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: k8srequiretrivyscan
+spec:
+  crd:
+    spec:
+      names:
+        kind: K8sRequireTrivyScan
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package k8srequiretrivyscan
+
+        violation[{"msg": msg}] {
+          input.review.object.kind == "Deployment"
+          annotations := input.review.object.spec.template.metadata.annotations
+          not annotations["security.deployaz.io/trivy-scan-passed"]
+          msg := "Deployment is missing security.deployaz.io/trivy-scan-passed annotation -- image has not been proven scanned by CI"
+        }
+
+        violation[{"msg": msg}] {
+          input.review.object.kind == "Deployment"
+          annotations := input.review.object.spec.template.metadata.annotations
+          annotations["security.deployaz.io/trivy-scan-passed"] != "true"
+          msg := "Deployment's Trivy scan annotation is not \"true\" -- image failed or skipped the CVE scan"
+        }
+
+        violation[{"msg": msg}] {
+          input.review.object.kind == "Deployment"
+          annotations := input.review.object.spec.template.metadata.annotations
+          container := input.review.object.spec.template.spec.containers[_]
+          image_sha := split(container.image, ":")[1]
+          scanned_sha := annotations["security.deployaz.io/scanned-sha"]
+          image_sha != scanned_sha
+          msg := sprintf("Deployment's image tag (%v) does not match the Trivy-scanned SHA annotation (%v) -- image was swapped after the scan", [image_sha, scanned_sha])
+        }

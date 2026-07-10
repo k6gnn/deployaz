@@ -17,15 +17,26 @@ spec:
       annotations:
         prometheus.io/scrape: "true"
         prometheus.io/path: "/actuator/prometheus"
-        prometheus.io/port: "8080"
+        prometheus.io/port: "8081"
+        security.deployaz.io/trivy-scan-passed: "false"
+        security.deployaz.io/scanned-sha: "unscanned"
     spec:
+      # Deliberately NOT bound to any Vault role -- tenant-b-sa has no
+      # matching entry in auth/kubernetes/role/*, so DEPLOYAZ_SECRETS_REQUIRE
+      # stays unset (defaults to false in application.yml). This tenant
+      # doesn't get a secret, and that absence is itself part of the
+      # isolation proof for this phase.
+      serviceAccountName: tenant-b-sa
       containers:
         - name: deployaz-tenant-b
           # Same image as tenant-a -- this is a synthetic second tenant proving the
           # PLATFORM's isolation, not a different app. CI updates this tag too (see ci-cd.yml).
           image: ghcr.io/k6gnn/deployaz-demo:a6f26998d96c25e3f7392ba45e8ba7bb19178ef9
           ports:
-            - containerPort: 8080
+            - name: http
+              containerPort: 8080
+            - name: management
+              containerPort: 8081
           resources:
             requests:
               cpu: 100m
@@ -36,12 +47,12 @@ spec:
           readinessProbe:
             httpGet:
               path: /actuator/health
-              port: 8080
+              port: 8081
             initialDelaySeconds: 15
             periodSeconds: 10
           livenessProbe:
             httpGet:
               path: /actuator/health
-              port: 8080
+              port: 8081
             initialDelaySeconds: 30
             periodSeconds: 20

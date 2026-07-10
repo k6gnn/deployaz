@@ -14,6 +14,6 @@ spec:
     matchNames:
       - deployaz-demo
   endpoints:
-    - port: http
+    - port: management
       path: /actuator/prometheus
       interval: 15s

@@ -1,0 +1,557 @@
+diff --git a/app/Dockerfile b/app/Dockerfile
+index 4c54e45..c8e4519 100644
+--- a/app/Dockerfile
++++ b/app/Dockerfile
+@@ -12,5 +12,5 @@ RUN addgroup -S app && adduser -S app -G app
+ WORKDIR /app
+ COPY --from=build /build/target/*.jar app.jar
+ USER app
+-EXPOSE 8080
++EXPOSE 8080 8081
+ ENTRYPOINT ["java", "-jar", "/app/app.jar"]
+diff --git a/app/src/main/java/az/deployaz/demo/DbPasswordHealthIndicator.java b/app/src/main/java/az/deployaz/demo/DbPasswordHealthIndicator.java
+new file mode 100644
+index 0000000..c8ef3bd
+--- /dev/null
++++ b/app/src/main/java/az/deployaz/demo/DbPasswordHealthIndicator.java
+@@ -0,0 +1,42 @@
++package az.deployaz.demo;
++
++import org.springframework.boot.actuate.health.Health;
++import org.springframework.boot.actuate.health.HealthIndicator;
++import org.springframework.stereotype.Component;
++
++/**
++ * Contributes a "dbPassword" section to /actuator/health -- reachable only
++ * on the management port (:8081, see application.yml), which is not exposed
++ * through the Service/Ingress and is blocked from external traffic by the
++ * NetworkPolicy. Only the monitoring namespace (Prometheus) and kubelet
++ * probes can reach it.
++ *
++ * Reports presence only ("configured": true/false) -- never the secret value.
++ */
++@Component
++public class DbPasswordHealthIndicator implements HealthIndicator {
++
++    private final SecretStartupCheck secretStartupCheck;
++
++    public DbPasswordHealthIndicator(SecretStartupCheck secretStartupCheck) {
++        this.secretStartupCheck = secretStartupCheck;
++    }
++
++    @Override
++    public Health health() {
++        if (!secretStartupCheck.isRequired()) {
++            // CI/local dev: no secret expected, nothing to report.
++            return Health.up()
++                    .withDetail("configured", false)
++                    .withDetail("required", false)
++                    .build();
++        }
++        // If required=true and we got this far without SecretStartupCheck
++        // having thrown, the secret is present -- the app wouldn't be
++        // running otherwise. This just makes that fact visible.
++        return Health.up()
++                .withDetail("configured", secretStartupCheck.isSecretPresent())
++                .withDetail("required", true)
++                .build();
++    }
++}
+diff --git a/app/src/main/java/az/deployaz/demo/SecretStartupCheck.java b/app/src/main/java/az/deployaz/demo/SecretStartupCheck.java
+new file mode 100644
+index 0000000..0d50e44
+--- /dev/null
++++ b/app/src/main/java/az/deployaz/demo/SecretStartupCheck.java
+@@ -0,0 +1,68 @@
++package az.deployaz.demo;
++
++import jakarta.annotation.PostConstruct;
++import org.springframework.beans.factory.annotation.Value;
++import org.springframework.stereotype.Component;
++
++import java.io.IOException;
++import java.nio.file.Files;
++import java.nio.file.Path;
++
++/**
++ * Proves the secret actually landed in the pod, without ever exposing its
++ * value anywhere -- not a log line, not an endpoint, not an exception message.
++ *
++ * When deployaz.secrets.require=false (default -- CI, local dev), this is a
++ * no-op: no Vault agent is expected, so there's nothing to check.
++ *
++ * When deployaz.secrets.require=true (set only in k8s deployment manifests),
++ * a missing or empty secret file throws on startup. Spring Boot's context
++ * fails, the pod never reaches Running/Ready, and the readiness probe never
++ * passes -- that failure *is* the proof, no custom code needed to report it.
++ */
++@Component
++public class SecretStartupCheck {
++
++    private final boolean required;
++    private final Path secretPath;
++    private volatile boolean secretPresent = false;
++
++    public SecretStartupCheck(
++            @Value("${deployaz.secrets.require:false}") boolean required,
++            @Value("${deployaz.secrets.db-password-path:/vault/secrets/db-password}") String path) {
++        this.required = required;
++        this.secretPath = Path.of(path);
++    }
++
++    @PostConstruct
++    void verifySecretIsPresent() {
++        if (!required) {
++            return;
++        }
++        String value;
++        try {
++            value = Files.readString(secretPath).trim();
++        } catch (IOException e) {
++            throw new IllegalStateException(
++                    "deployaz.secrets.require=true but secret file was not readable at "
++                            + secretPath + " -- refusing to start. Check Vault Agent Injector "
++                            + "annotations and that this pod's ServiceAccount is bound to a Vault role.",
++                    e);
++        }
++        if (value.isEmpty()) {
++            throw new IllegalStateException(
++                    "deployaz.secrets.require=true but secret file at " + secretPath
++                            + " was empty -- refusing to start.");
++        }
++        this.secretPresent = true;
++    }
++
++    /** Used only to report presence (true/false), never the value itself. */
++    public boolean isSecretPresent() {
++        return secretPresent;
++    }
++
++    public boolean isRequired() {
++        return required;
++    }
++}
+diff --git a/app/src/main/resources/application.yml b/app/src/main/resources/application.yml
+index 3830bb3..6518f9d 100644
+--- a/app/src/main/resources/application.yml
++++ b/app/src/main/resources/application.yml
+@@ -2,6 +2,8 @@ server:
+   port: 8080
+ 
+ management:
++  server:
++    port: 8081
+   endpoints:
+     web:
+       exposure:
+@@ -16,3 +18,11 @@ management:
+ spring:
+   application:
+     name: deployaz-demo
++
++deployaz:
++  secrets:
++    # Only "true" in real deployments (set via env var in k8s manifests).
++    # Left false here so `mvn verify` in CI and local `mvn spring-boot:run`
++    # don't require a running Vault agent to inject the file.
++    require: false
++    db-password-path: /vault/secrets/db-password
+diff --git a/app/src/test/java/az/deployaz/demo/HelloControllerTest.java b/app/src/test/java/az/deployaz/demo/HelloControllerTest.java
+index 760714d..d3932e9 100644
+--- a/app/src/test/java/az/deployaz/demo/HelloControllerTest.java
++++ b/app/src/test/java/az/deployaz/demo/HelloControllerTest.java
+@@ -4,19 +4,28 @@ import org.junit.jupiter.api.Test;
+ import org.springframework.beans.factory.annotation.Autowired;
+ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+ import org.springframework.boot.test.context.SpringBootTest;
++import org.springframework.boot.test.web.client.TestRestTemplate;
++import org.springframework.boot.test.web.server.LocalManagementPort;
+ import org.springframework.test.web.servlet.MockMvc;
+ 
++import static org.assertj.core.api.Assertions.assertThat;
+ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+ 
+-@SpringBootTest
++@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+ @AutoConfigureMockMvc
+ class HelloControllerTest {
+ 
+     @Autowired
+     private MockMvc mockMvc;
+ 
++    @Autowired
++    private TestRestTemplate restTemplate;
++
++    @LocalManagementPort
++    private int managementPort;
++
+     @Test
+     void helloEndpointReturnsMessage() throws Exception {
+         mockMvc.perform(get("/api/hello"))
+@@ -25,9 +34,24 @@ class HelloControllerTest {
+     }
+ 
+     @Test
+-    void actuatorHealthIsUp() throws Exception {
+-        mockMvc.perform(get("/actuator/health"))
+-                .andExpect(status().isOk())
+-                .andExpect(jsonPath("$.status").value("UP"));
++    void actuatorHealthIsUpOnManagementPort() {
++        // Actuator lives on the separate management port (application.yml:
++        // management.server.port=8081), not the public port -- this test
++        // hits it the way Prometheus/kubelet actually would, rather than
++        // through the main MockMvc context which no longer serves it.
++        String url = "http://localhost:" + managementPort + "/actuator/health";
++        var response = restTemplate.getForEntity(url, String.class);
++        assertThat(response.getStatusCode().value()).isEqualTo(200);
++        assertThat(response.getBody()).contains("\"status\":\"UP\"");
++    }
++
++    @Test
++    void dbPasswordHealthDetailReportsNotRequiredInTests() {
++        // deployaz.secrets.require defaults to false (see application.yml),
++        // so tests never need a real Vault agent -- this confirms that
++        // default holds and the detail is visible on the management port.
++        String url = "http://localhost:" + managementPort + "/actuator/health";
++        var response = restTemplate.getForEntity(url, String.class);
++        assertThat(response.getBody()).contains("\"required\":false");
+     }
+ }
+diff --git a/k8s/base/deployment.yaml b/k8s/base/deployment.yaml
+index 950f24e..4816fe2 100644
+--- a/k8s/base/deployment.yaml
++++ b/k8s/base/deployment.yaml
+@@ -17,14 +17,35 @@ spec:
+       annotations:
+         prometheus.io/scrape: "true"
+         prometheus.io/path: "/actuator/prometheus"
+-        prometheus.io/port: "8080"
++        prometheus.io/port: "8081"
++        # --- Vault Agent Injector (Phase 3) ---
++        # Injector mutates this pod at admission time: adds an init container
++        # that fetches the secret once before the app starts, plus a sidecar
++        # that keeps it renewed. The app never talks to Vault directly.
++        vault.hashicorp.com/agent-inject: "true"
++        vault.hashicorp.com/role: "tenant-a-role"
++        vault.hashicorp.com/agent-inject-secret-db-password: "secret/data/deployaz-demo/db"
++        # Template extracts just the db_password field into a plain file at
++        # /vault/secrets/db-password so the app can read it as a Spring Boot
++        # config file source, not an env var.
++        vault.hashicorp.com/agent-inject-template-db-password: |
++          {{- with secret "secret/data/deployaz-demo/db" -}}
++          {{ .Data.data.db_password }}
++          {{- end -}}
+     spec:
++      serviceAccountName: tenant-a-sa
+       containers:
+         - name: deployaz-demo
+           # CI overwrites this tag on every push to main — do not hand-edit the tag.
+           image: ghcr.io/k6gnn/deployaz-demo:a6f26998d96c25e3f7392ba45e8ba7bb19178ef9
+           ports:
+-            - containerPort: 8080
++            - name: http
++              containerPort: 8080
++            - name: management
++              containerPort: 8081
++          env:
++            - name: DEPLOYAZ_SECRETS_REQUIRE
++              value: "true"
+           resources:
+             requests:
+               cpu: 100m
+@@ -35,12 +56,16 @@ spec:
+           readinessProbe:
+             httpGet:
+               path: /actuator/health
+-              port: 8080
+-            initialDelaySeconds: 15
++              port: 8081
++            # Vault Agent's init container must fetch the secret before this
++            # container even starts, and SecretStartupCheck then verifies it
++            # on boot -- both add real time before the app is ready. Bumped
++            # from 15s (Phase 2) to give room for that without flapping.
++            initialDelaySeconds: 25
+             periodSeconds: 10
+           livenessProbe:
+             httpGet:
+               path: /actuator/health
+-              port: 8080
+-            initialDelaySeconds: 30
++              port: 8081
++            initialDelaySeconds: 40
+             periodSeconds: 20
+diff --git a/k8s/base/networkpolicy.yaml b/k8s/base/networkpolicy.yaml
+index 81ffb56..a1e643f 100644
+--- a/k8s/base/networkpolicy.yaml
++++ b/k8s/base/networkpolicy.yaml
+@@ -46,3 +46,29 @@ spec:
+         - namespaceSelector:
+             matchLabels:
+               kubernetes.io/metadata.name: ingress-nginx
++---
++# Phase 3: actuator/prometheus moved to the management port (8081), which is
++# NOT covered by the nginx rule above (that rule doesn't restrict by port, so
++# note it technically already allows nginx -> 8081 too -- this rule is what
++# actually matters: it's the only thing permitting the monitoring namespace
++# in at all. Without it, Prometheus can't scrape this pod, same gap this
++# phase's health indicator would otherwise go unnoticed.
++apiVersion: networking.k8s.io/v1
++kind: NetworkPolicy
++metadata:
++  name: allow-ingress-from-monitoring
++  namespace: deployaz-demo
++spec:
++  podSelector:
++    matchLabels:
++      app: deployaz-demo
++  policyTypes:
++    - Ingress
++  ingress:
++    - from:
++        - namespaceSelector:
++            matchLabels:
++              kubernetes.io/metadata.name: monitoring
++      ports:
++        - protocol: TCP
++          port: 8081
+diff --git a/k8s/base/service.yaml b/k8s/base/service.yaml
+index 1c9e70e..a42c819 100644
+--- a/k8s/base/service.yaml
++++ b/k8s/base/service.yaml
+@@ -12,4 +12,7 @@ spec:
+     - name: http
+       port: 80
+       targetPort: 8080
++    - name: management
++      port: 8081
++      targetPort: 8081
+   type: ClusterIP
+diff --git a/k8s/base/servicemonitor.yaml b/k8s/base/servicemonitor.yaml
+index d4ef973..8a83551 100644
+--- a/k8s/base/servicemonitor.yaml
++++ b/k8s/base/servicemonitor.yaml
+@@ -14,6 +14,6 @@ spec:
+     matchNames:
+       - deployaz-demo
+   endpoints:
+-    - port: http
++    - port: management
+       path: /actuator/prometheus
+       interval: 15s
+diff --git a/k8s/tenants/tenant-b/deployment.yaml b/k8s/tenants/tenant-b/deployment.yaml
+index a2e13f0..c4c3a59 100644
+--- a/k8s/tenants/tenant-b/deployment.yaml
++++ b/k8s/tenants/tenant-b/deployment.yaml
+@@ -17,15 +17,24 @@ spec:
+       annotations:
+         prometheus.io/scrape: "true"
+         prometheus.io/path: "/actuator/prometheus"
+-        prometheus.io/port: "8080"
++        prometheus.io/port: "8081"
+     spec:
++      # Deliberately NOT bound to any Vault role -- tenant-b-sa has no
++      # matching entry in auth/kubernetes/role/*, so DEPLOYAZ_SECRETS_REQUIRE
++      # stays unset (defaults to false in application.yml). This tenant
++      # doesn't get a secret, and that absence is itself part of the
++      # isolation proof for this phase.
++      serviceAccountName: tenant-b-sa
+       containers:
+         - name: deployaz-tenant-b
+           # Same image as tenant-a -- this is a synthetic second tenant proving the
+           # PLATFORM's isolation, not a different app. CI updates this tag too (see ci-cd.yml).
+           image: ghcr.io/k6gnn/deployaz-demo:a6f26998d96c25e3f7392ba45e8ba7bb19178ef9
+           ports:
+-            - containerPort: 8080
++            - name: http
++              containerPort: 8080
++            - name: management
++              containerPort: 8081
+           resources:
+             requests:
+               cpu: 100m
+@@ -36,12 +45,12 @@ spec:
+           readinessProbe:
+             httpGet:
+               path: /actuator/health
+-              port: 8080
++              port: 8081
+             initialDelaySeconds: 15
+             periodSeconds: 10
+           livenessProbe:
+             httpGet:
+               path: /actuator/health
+-              port: 8080
++              port: 8081
+             initialDelaySeconds: 30
+             periodSeconds: 20
+diff --git a/k8s/tenants/tenant-b/networkpolicy.yaml b/k8s/tenants/tenant-b/networkpolicy.yaml
+index eff46d1..f211cfb 100644
+--- a/k8s/tenants/tenant-b/networkpolicy.yaml
++++ b/k8s/tenants/tenant-b/networkpolicy.yaml
+@@ -43,3 +43,23 @@ spec:
+         - namespaceSelector:
+             matchLabels:
+               kubernetes.io/metadata.name: ingress-nginx
++---
++apiVersion: networking.k8s.io/v1
++kind: NetworkPolicy
++metadata:
++  name: allow-ingress-from-monitoring
++  namespace: deployaz-tenant-b
++spec:
++  podSelector:
++    matchLabels:
++      app: deployaz-tenant-b
++  policyTypes:
++    - Ingress
++  ingress:
++    - from:
++        - namespaceSelector:
++            matchLabels:
++              kubernetes.io/metadata.name: monitoring
++      ports:
++        - protocol: TCP
++          port: 8081
+diff --git a/k8s/tenants/tenant-b/service.yaml b/k8s/tenants/tenant-b/service.yaml
+index b2126a7..a141c87 100644
+--- a/k8s/tenants/tenant-b/service.yaml
++++ b/k8s/tenants/tenant-b/service.yaml
+@@ -12,4 +12,7 @@ spec:
+     - name: http
+       port: 80
+       targetPort: 8080
++    - name: management
++      port: 8081
++      targetPort: 8081
+   type: ClusterIP
+diff --git a/k8s/tenants/tenant-b/servicemonitor.yaml b/k8s/tenants/tenant-b/servicemonitor.yaml
+index daf0e5e..5005788 100644
+--- a/k8s/tenants/tenant-b/servicemonitor.yaml
++++ b/k8s/tenants/tenant-b/servicemonitor.yaml
+@@ -13,6 +13,6 @@ spec:
+     matchNames:
+       - deployaz-tenant-b
+   endpoints:
+-    - port: http
++    - port: management
+       path: /actuator/prometheus
+       interval: 15s
+diff --git a/k8s/vault/namespace.yaml b/k8s/vault/namespace.yaml
+new file mode 100644
+index 0000000..22ea129
+--- /dev/null
++++ b/k8s/vault/namespace.yaml
+@@ -0,0 +1,6 @@
++apiVersion: v1
++kind: Namespace
++metadata:
++  name: vault
++  labels:
++    app.kubernetes.io/part-of: deployaz-platform
+diff --git a/k8s/vault/vault-setup.sh b/k8s/vault/vault-setup.sh
+new file mode 100644
+index 0000000..b3d5baf
+--- /dev/null
++++ b/k8s/vault/vault-setup.sh
+@@ -0,0 +1,46 @@
++#!/usr/bin/env bash
++# One-time Vault configuration for Phase 3.
++# Run this AFTER `helm install vault ...` has finished and the vault-0 pod
++# is Running (dev mode auto-unseals, so no separate unseal step is needed).
++#
++# This script is intentionally NOT part of CI/GitOps -- writing a secret
++# value belongs in an operator's terminal, never in a pipeline log or a
++# committed file. That is the whole point of this phase.
++set -euo pipefail
++
++NAMESPACE="vault"
++POD="vault-0"
++
++exec_vault() {
++  kubectl exec -n "$NAMESPACE" "$POD" -- sh -c "$1"
++}
++
++echo "==> Enabling the Kubernetes auth method"
++exec_vault "VAULT_TOKEN=root vault auth enable kubernetes || echo 'already enabled'"
++
++echo "==> Configuring Kubernetes auth to talk to this cluster's API server"
++exec_vault "VAULT_TOKEN=root vault write auth/kubernetes/config \
++  kubernetes_host=https://\$KUBERNETES_SERVICE_HOST:\$KUBERNETES_SERVICE_PORT"
++
++echo "==> Enabling the KV v2 secrets engine at path 'secret/'"
++exec_vault "VAULT_TOKEN=root vault secrets enable -path=secret kv-v2 || echo 'already enabled'"
++
++echo "==> Writing the synthetic DB_PASSWORD secret (dev/demo value, not a real credential)"
++exec_vault "VAULT_TOKEN=root vault kv put secret/deployaz-demo/db db_password='dev-only-synthetic-value-42'"
++
++echo "==> Writing a Vault policy that can ONLY read tenant-a's own secret path"
++exec_vault "VAULT_TOKEN=root vault policy write tenant-a-policy -<<'EOF'
++path \"secret/data/deployaz-demo/db\" {
++  capabilities = [\"read\"]
++}
++EOF"
++
++echo "==> Binding tenant-a-sa (deployaz-demo namespace) to that policy"
++exec_vault "VAULT_TOKEN=root vault write auth/kubernetes/role/tenant-a-role \
++  bound_service_account_names=tenant-a-sa \
++  bound_service_account_namespaces=deployaz-demo \
++  policies=tenant-a-policy \
++  ttl=1h"
++
++echo "==> Done. Verify tenant-b-sa (if it exists) is NOT bound to tenant-a-policy --"
++echo "    that's the isolation boundary this phase is supposed to prove."
+diff --git a/k8s/vault/vault-values.yaml b/k8s/vault/vault-values.yaml
+new file mode 100644
+index 0000000..aa1d9f4
+--- /dev/null
++++ b/k8s/vault/vault-values.yaml
+@@ -0,0 +1,47 @@
++# Values for the official HashiCorp Vault Helm chart.
++# Install with:
++#   helm repo add hashicorp https://helm.releases.hashicorp.com
++#   helm install vault hashicorp/vault -n vault -f k8s/vault/vault-values.yaml
++#
++# DEV MODE NOTICE (read before you assume this is "production Vault"):
++# server.dev.enabled=true runs Vault in-memory, auto-unsealed, root-token
++# fixed to "root". That is intentional here -- a local kind cluster proving
++# the *pattern* (Agent Injector, KV secrets, no plaintext in Git) rather than
++# running a production Vault (which needs real storage backend, auto-unseal
++# via cloud KMS, TLS, and a proper root-token rotation policy). Do not lift
++# this values file into a real deployment without changing server.dev to
++# server.ha + a real seal/storage config.
++
++server:
++  dev:
++    enabled: true
++    devRootToken: "root"
++
++  # Single replica is fine for dev mode; dev mode can't be HA anyway
++  # (it's in-memory storage, not Raft/Consul).
++  standalone:
++    enabled: false
++
++  ha:
++    enabled: false
++
++  resources:
++    requests:
++      cpu: 100m
++      memory: 256Mi
++    limits:
++      cpu: 500m
++      memory: 512Mi
++
++injector:
++  enabled: true
++  resources:
++    requests:
++      cpu: 100m
++      memory: 128Mi
++    limits:
++      cpu: 250m
++      memory: 256Mi
++
++ui:
++  enabled: true

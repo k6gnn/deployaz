@@ -1,0 +1,18 @@
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sRequireTrivyScan
+metadata:
+  name: require-trivy-scan-tenant-workloads
+spec:
+  enforcementAction: deny
+  match:
+    kinds:
+      - apiGroups: ["apps"]
+        kinds: ["Deployment"]
+    # Scoped explicitly to the two tenant namespaces this platform manages.
+    # Do NOT widen this to all namespaces -- kube-system, argocd, vault,
+    # gatekeeper-system, and monitoring all run Deployments that were never
+    # meant to carry this annotation, and a cluster-wide match here would
+    # block the platform's own control plane from ever updating.
+    namespaces:
+      - deployaz-demo
+      - deployaz-tenant-b

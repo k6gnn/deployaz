@@ -1,0 +1,47 @@
+# Values for the official HashiCorp Vault Helm chart.
+# Install with:
+#   helm repo add hashicorp https://helm.releases.hashicorp.com
+#   helm install vault hashicorp/vault -n vault -f k8s/vault/vault-values.yaml
+#
+# DEV MODE NOTICE (read before you assume this is "production Vault"):
+# server.dev.enabled=true runs Vault in-memory, auto-unsealed, root-token
+# fixed to "root". That is intentional here -- a local kind cluster proving
+# the *pattern* (Agent Injector, KV secrets, no plaintext in Git) rather than
+# running a production Vault (which needs real storage backend, auto-unseal
+# via cloud KMS, TLS, and a proper root-token rotation policy). Do not lift
+# this values file into a real deployment without changing server.dev to
+# server.ha + a real seal/storage config.
+
+server:
+  dev:
+    enabled: true
+    devRootToken: "root"
+
+  # Single replica is fine for dev mode; dev mode can't be HA anyway
+  # (it's in-memory storage, not Raft/Consul).
+  standalone:
+    enabled: false
+
+  ha:
+    enabled: false
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+injector:
+  enabled: true
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+
+ui:
+  enabled: true

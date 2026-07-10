@@ -46,3 +46,29 @@ spec:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: ingress-nginx
+---
+# Phase 3: actuator/prometheus moved to the management port (8081), which is
+# NOT covered by the nginx rule above (that rule doesn't restrict by port, so
+# note it technically already allows nginx -> 8081 too -- this rule is what
+# actually matters: it's the only thing permitting the monitoring namespace
+# in at all. Without it, Prometheus can't scrape this pod, same gap this
+# phase's health indicator would otherwise go unnoticed.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingress-from-monitoring
+  namespace: deployaz-demo
+spec:
+  podSelector:
+    matchLabels:
+      app: deployaz-demo
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - protocol: TCP
+          port: 8081

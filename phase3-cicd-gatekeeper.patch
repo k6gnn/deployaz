@@ -1,0 +1,389 @@
+diff --git a/.github/workflows/ci-cd.yml b/.github/workflows/ci-cd.yml
+index b14a638..f55829d 100644
+--- a/.github/workflows/ci-cd.yml
++++ b/.github/workflows/ci-cd.yml
+@@ -17,7 +17,21 @@ env:
+   IMAGE_NAME: k6gnn/deployaz-demo
+ 
+ jobs:
++  secret-scan:
++    # Runs first, on every push AND pull_request, against the full history --
++    # catches a committed secret before it ever reaches a build step or a log.
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v4
++        with:
++          fetch-depth: 0
++      - name: Scan for committed secrets (gitleaks)
++        uses: gitleaks/gitleaks-action@v2
++        env:
++          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
++
+   test:
++    needs: secret-scan
+     runs-on: ubuntu-latest
+     defaults:
+       run:
+@@ -32,7 +46,7 @@ jobs:
+       - name: Run tests
+         run: mvn -B clean verify
+ 
+-  build-and-push:
++  build-scan-push:
+     needs: test
+     if: github.event_name == 'push'
+     runs-on: ubuntu-latest
+@@ -42,31 +56,57 @@ jobs:
+     steps:
+       - uses: actions/checkout@v4
+ 
++      - name: Build image locally (not pushed yet)
++        uses: docker/build-push-action@v5
++        with:
++          context: app
++          load: true
++          push: false
++          tags: local-scan:${{ github.sha }}
++
++      - name: Scan image for CRITICAL/HIGH CVEs (Trivy)
++        uses: aquasecurity/trivy-action@0.24.0
++        with:
++          image-ref: local-scan:${{ github.sha }}
++          severity: "CRITICAL,HIGH"
++          exit-code: "1"
++          ignore-unfixed: true
++          format: table
++        # If this step fails, the job stops here -- nothing below runs, so a
++        # vulnerable image is never pushed to GHCR and never reaches
++        # k8s/*/deployment.yaml. This is the CI-time gate. Gatekeeper (Phase
++        # 3, admission-time) is the second, independent gate in case an image
++        # ever reaches the registry any other way (e.g. a manual push).
++
+       - name: Log in to GHCR
++        if: success()
+         uses: docker/login-action@v3
+         with:
+           registry: ${{ env.REGISTRY }}
+           username: ${{ github.actor }}
+           password: ${{ secrets.GITHUB_TOKEN }}
+ 
+-      - name: Build and push image
+-        uses: docker/build-push-action@v5
+-        with:
+-          context: app
+-          push: true
+-          tags: |
+-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
++      - name: Tag and push scanned image
++        if: success()
++        run: |
++          docker tag local-scan:${{ github.sha }} ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
++          docker tag local-scan:${{ github.sha }} ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
++          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
++          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+ 
+-      - name: Update GitOps manifests with new image tag
++      - name: Update GitOps manifests with new image tag and scan status
++        if: success()
+         run: |
+           # Both tenants run the same image (tenant-b is synthetic, proving platform
+           # isolation rather than app diversity) -- so both deployment manifests need
+           # the tag bump, or tenant-b silently stops getting updates after this point.
+-          sed -i "s|image: .*deployaz-demo:.*|image: ${REGISTRY}/${IMAGE_NAME}:${{ github.sha }}|" k8s/base/deployment.yaml
+-          sed -i "s|image: .*deployaz-demo:.*|image: ${REGISTRY}/${IMAGE_NAME}:${{ github.sha }}|" k8s/tenants/tenant-b/deployment.yaml
++          for f in k8s/base/deployment.yaml k8s/tenants/tenant-b/deployment.yaml; do
++            sed -i "s|image: .*deployaz-demo:.*|image: ${REGISTRY}/${IMAGE_NAME}:${{ github.sha }}|" "$f"
++            sed -i 's|security.deployaz.io/trivy-scan-passed: .*|security.deployaz.io/trivy-scan-passed: "true"|' "$f"
++            sed -i "s|security.deployaz.io/scanned-sha: .*|security.deployaz.io/scanned-sha: \"${{ github.sha }}\"|" "$f"
++          done
+           git config user.name "deployaz-ci"
+           git config user.email "ci@deployaz.local"
+           git add k8s/base/deployment.yaml k8s/tenants/tenant-b/deployment.yaml
+-          git diff --cached --quiet || git commit -m "ci: bump image to ${{ github.sha }}"
++          git diff --cached --quiet || git commit -m "ci: bump image to ${{ github.sha }}, mark Trivy-scanned"
+           git push
+diff --git a/docs/PHASE3_SETUP.md b/docs/PHASE3_SETUP.md
+new file mode 100644
+index 0000000..c1032e9
+--- /dev/null
++++ b/docs/PHASE3_SETUP.md
+@@ -0,0 +1,161 @@
++# Phase 3 — Secrets Management & Image Security
++
++Phase 2 proved two tenants can be isolated from each other. Phase 3 proves
++the platform can handle something every real client will eventually need:
++a secret (DB password, API key) that must never sit in Git as plaintext,
++and a supply-chain gate that blocks a vulnerable image before it ever runs.
++
++Three independent pieces, each with its own honest limitations noted below.
++
++## 1. Vault (secrets management)
++
++**What this is:** HashiCorp Vault in **dev mode** (in-memory, auto-unsealed,
++fixed root token `"root"`) plus the Vault Agent Injector. This proves the
++*pattern* — no plaintext secret in Git, secret lands in the pod as an
++injected file, RBAC-equivalent scoping per tenant — not a production-grade
++Vault install. See the warning at the top of `k8s/vault/vault-values.yaml`
++for exactly what would need to change for real production use (real storage
++backend, cloud KMS auto-unseal, TLS, root token rotation).
++
++### Install
++```bash
++kubectl apply -f k8s/vault/namespace.yaml
++helm repo add hashicorp https://helm.releases.hashicorp.com
++helm repo update
++helm install vault hashicorp/vault -n vault -f k8s/vault/vault-values.yaml
++kubectl get pods -n vault -w   # wait for vault-0 to be Running (dev mode, no manual unseal needed)
++```
++
++### One-time configuration (run once, from your terminal — never from CI)
++```bash
++bash k8s/vault/vault-setup.sh
++```
++This enables Kubernetes auth, writes the synthetic `db_password` secret,
++and binds `tenant-a-sa` to a policy that can read **only**
++`secret/data/deployaz-demo/db`. `tenant-b-sa` is deliberately left unbound —
++that absence is itself part of the isolation proof.
++
++### Deploy the app changes
++Merge `phase3-vault-security.patch` (already applied and build-verified),
++push to `main`. ArgoCD syncs `k8s/base/deployment.yaml` — tenant-a's pod
++gets the Vault Agent Injector's init container + sidecar, mounts the secret
++at `/vault/secrets/db-password`, and `SecretStartupCheck` fails the app's
++startup if it's missing (fail-fast, not a runtime check bolted on after).
++
++### Verify (don't just trust that it "looks right")
++
++**a. The secret is genuinely not in Git:**
++```bash
++git grep -i "dev-only-synthetic-value" -- ':!docs' ':!k8s/vault/vault-setup.sh'
++```
++Expect: no output (the only place that value appears is the one-time script
++you ran locally, which is fine — that script itself isn't a secret, it just
++*writes* one at runtime).
++
++**b. The secret genuinely landed in the pod:**
++```bash
++kubectl exec -n deployaz-demo deploy/deployaz-demo -c deployaz-demo -- \
++  cat /vault/secrets/db-password
++```
++Expect: the synthetic value. This is the manual, infra-side proof —
++no app code involved.
++
++**c. tenant-a's pod is actually Ready** (proves `SecretStartupCheck` passed;
++if the secret were missing, the pod would never reach `Running`/`Ready`):
++```bash
++kubectl get pods -n deployaz-demo
++```
++
++**d. tenant-b has no access to tenant-a's secret** (isolation, not just
++absence):
++```bash
++kubectl exec -n vault vault-0 -- sh -c \
++  "VAULT_TOKEN=root vault read auth/kubernetes/role/tenant-a-role"
++```
++Confirm `bound_service_account_names` lists only `tenant-a-sa` — `tenant-b-sa`
++should never appear here.
++
++**e. The health indicator is visible only internally, on the management
++port, not externally:**
++```bash
++kubectl exec -n deployaz-demo deploy/deployaz-demo -c deployaz-demo -- \
++  curl -s http://localhost:8081/actuator/health
++```
++Should show `"dbPassword"`-related detail with `"configured": true,
++"required": true` — but note this only works via `kubectl exec` *inside*
++the pod's network namespace. Confirm it's actually blocked from outside:
++```bash
++curl -m 3 http://demo.deployaz.local:8081/actuator/health
++```
++Expect: connection refused / timeout (ingress doesn't route to 8081, and the
++NetworkPolicy only allows the `monitoring` namespace and nginx in on that
++port).
++
++## 2. CI supply-chain gates (gitleaks + Trivy)
++
++- **`secret-scan` job** (gitleaks) — runs first, on every push and PR,
++  against full git history. Fails the pipeline if a secret is ever
++  committed, before any build step runs.
++- **`build-scan-push` job** — builds the image **locally only** first
++  (`load: true`, not pushed), scans it with Trivy for CRITICAL/HIGH CVEs,
++  and only pushes to GHCR + bumps the GitOps manifests if the scan passes.
++  A failed scan means the image never reaches the registry and the
++  manifests are never touched — tenant pods keep running the last known
++  good image.
++- On success, CI now stamps `security.deployaz.io/trivy-scan-passed: "true"`
++  and `security.deployaz.io/scanned-sha` onto both deployment manifests —
++  this is what Gatekeeper checks below.
++
++### Verify
++Push a small change, watch the Actions tab: `secret-scan` → `test` →
++`build-scan-push` (with the Trivy step visible in the logs, listing 0
++CRITICAL/HIGH or failing the job if it finds any).
++
++To prove the *failure* path works (don't skip this — a gate that's never
++seen a real failure hasn't been proven): temporarily point the Dockerfile's
++base image at an old, known-vulnerable tag (e.g.
++`eclipse-temurin:11-jre-alpine` pinned to an old digest), push, confirm the
++job fails at the Trivy step and nothing gets pushed to GHCR. Then revert.
++
++## 3. Gatekeeper (admission-time policy)
++
++**What this is, honestly:** `K8sRequireTrivyScan` blocks any Deployment in
++`deployaz-demo` or `deployaz-tenant-b` that lacks a matching
++`trivy-scan-passed`/`scanned-sha` annotation pair. This is a **policy
++signal CI asserts, not a cryptographic attestation** — see the limitation
++note at the top of `constrainttemplate-trivy-scan.yaml`. It's real
++defense-in-depth (stops a hand-edited or manually-pushed Deployment from
++ever running), but the honest upgrade path beyond this phase is image
++signing (cosign) verified directly against the registry, not trusting an
++annotation.
++
++### Install
++```bash
++helm repo add gatekeeper https://open-policy-agent.github.io/gatekeeper/charts
++helm repo update
++helm install gatekeeper gatekeeper/gatekeeper -n gatekeeper-system --create-namespace
++kubectl apply -f k8s/gatekeeper/constrainttemplate-trivy-scan.yaml
++kubectl apply -f k8s/gatekeeper/constraint-trivy-scan.yaml
++```
++
++### Verify — prove it actually blocks, not just reports
++```bash
++kubectl get deployment deployaz-demo -n deployaz-demo -o yaml > /tmp/test-deploy.yaml
++# Edit /tmp/test-deploy.yaml: change spec.template.metadata.annotations
++# "security.deployaz.io/trivy-scan-passed" to "false"
++kubectl apply -f /tmp/test-deploy.yaml
++```
++Expect: the `apiserver` rejects the change outright with an admission
++webhook denial message quoting the Rego policy's `msg` string — not a
++successful apply that Kubernetes later reconciles away. If it applies
++successfully, the constraint isn't being enforced (check
++`kubectl get constrainttemplates` and `kubectl get k8srequiretrivyscan` for
++errors first).
++
++## What Phase 3 deliberately does not include
++
++- Self-service onboarding (Phase 4).
++- Cosign image signing (documented above as the real next hardening step
++  past annotation-based policy).
++- Production Vault (real storage backend, auto-unseal, TLS) — dev mode only,
++  as stated repeatedly above so it doesn't get missed.
+diff --git a/k8s/base/deployment.yaml b/k8s/base/deployment.yaml
+index 4816fe2..618d18c 100644
+--- a/k8s/base/deployment.yaml
++++ b/k8s/base/deployment.yaml
+@@ -18,6 +18,15 @@ spec:
+         prometheus.io/scrape: "true"
+         prometheus.io/path: "/actuator/prometheus"
+         prometheus.io/port: "8081"
++        # CI overwrites these two on every successful build-scan-push run (see
++        # .github/workflows/ci-cd.yml). Gatekeeper's ConstraintTemplate checks
++        # both before admitting a Deployment change. Note this is a policy
++        # signal CI asserts, not a cryptographic attestation -- a real
++        # hardening step beyond this phase would be image signing (cosign)
++        # verified by Gatekeeper/Kyverno directly against the registry,
++        # rather than trusting an annotation the pipeline wrote.
++        security.deployaz.io/trivy-scan-passed: "false"
++        security.deployaz.io/scanned-sha: "unscanned"
+         # --- Vault Agent Injector (Phase 3) ---
+         # Injector mutates this pod at admission time: adds an init container
+         # that fetches the secret once before the app starts, plus a sidecar
+diff --git a/k8s/gatekeeper/constraint-trivy-scan.yaml b/k8s/gatekeeper/constraint-trivy-scan.yaml
+new file mode 100644
+index 0000000..fe92ab6
+--- /dev/null
++++ b/k8s/gatekeeper/constraint-trivy-scan.yaml
+@@ -0,0 +1,18 @@
++apiVersion: constraints.gatekeeper.sh/v1beta1
++kind: K8sRequireTrivyScan
++metadata:
++  name: require-trivy-scan-tenant-workloads
++spec:
++  enforcementAction: deny
++  match:
++    kinds:
++      - apiGroups: ["apps"]
++        kinds: ["Deployment"]
++    # Scoped explicitly to the two tenant namespaces this platform manages.
++    # Do NOT widen this to all namespaces -- kube-system, argocd, vault,
++    # gatekeeper-system, and monitoring all run Deployments that were never
++    # meant to carry this annotation, and a cluster-wide match here would
++    # block the platform's own control plane from ever updating.
++    namespaces:
++      - deployaz-demo
++      - deployaz-tenant-b
+diff --git a/k8s/gatekeeper/constrainttemplate-trivy-scan.yaml b/k8s/gatekeeper/constrainttemplate-trivy-scan.yaml
+new file mode 100644
+index 0000000..a4de943
+--- /dev/null
++++ b/k8s/gatekeeper/constrainttemplate-trivy-scan.yaml
+@@ -0,0 +1,54 @@
++# Install Gatekeeper itself first (not included here -- it's a full
++# controller with its own CRDs and webhook, installed once cluster-wide):
++#   helm repo add gatekeeper https://open-policy-agent.github.io/gatekeeper/charts
++#   helm install gatekeeper gatekeeper/gatekeeper --namespace gatekeeper-system --create-namespace
++#
++# This file defines the policy itself: a Deployment is only admitted if its
++# pod template carries security.deployaz.io/trivy-scan-passed: "true" AND
++# security.deployaz.io/scanned-sha matches the SHA embedded in its image tag.
++#
++# LIMITATION, stated plainly: this trusts an annotation the CI pipeline
++# wrote -- it is not a cryptographic attestation. Someone with kubectl access
++# to hand-edit a Deployment (or a compromised CI token) could set the
++# annotation without a real scan having happened. The real production
++# hardening step is image signing (cosign) with Gatekeeper/Kyverno verifying
++# the signature against the registry directly, independent of any
++# self-reported field. That's out of scope for this phase but is the
++# documented next step, not a blind spot being hidden.
++apiVersion: templates.gatekeeper.sh/v1
++kind: ConstraintTemplate
++metadata:
++  name: k8srequiretrivyscan
++spec:
++  crd:
++    spec:
++      names:
++        kind: K8sRequireTrivyScan
++  targets:
++    - target: admission.k8s.gatekeeper.sh
++      rego: |
++        package k8srequiretrivyscan
++
++        violation[{"msg": msg}] {
++          input.review.object.kind == "Deployment"
++          annotations := input.review.object.spec.template.metadata.annotations
++          not annotations["security.deployaz.io/trivy-scan-passed"]
++          msg := "Deployment is missing security.deployaz.io/trivy-scan-passed annotation -- image has not been proven scanned by CI"
++        }
++
++        violation[{"msg": msg}] {
++          input.review.object.kind == "Deployment"
++          annotations := input.review.object.spec.template.metadata.annotations
++          annotations["security.deployaz.io/trivy-scan-passed"] != "true"
++          msg := "Deployment's Trivy scan annotation is not \"true\" -- image failed or skipped the CVE scan"
++        }
++
++        violation[{"msg": msg}] {
++          input.review.object.kind == "Deployment"
++          annotations := input.review.object.spec.template.metadata.annotations
++          container := input.review.object.spec.template.spec.containers[_]
++          image_sha := split(container.image, ":")[1]
++          scanned_sha := annotations["security.deployaz.io/scanned-sha"]
++          image_sha != scanned_sha
++          msg := sprintf("Deployment's image tag (%v) does not match the Trivy-scanned SHA annotation (%v) -- image was swapped after the scan", [image_sha, scanned_sha])
++        }
+diff --git a/k8s/tenants/tenant-b/deployment.yaml b/k8s/tenants/tenant-b/deployment.yaml
+index c4c3a59..e593a13 100644
+--- a/k8s/tenants/tenant-b/deployment.yaml
++++ b/k8s/tenants/tenant-b/deployment.yaml
+@@ -18,6 +18,8 @@ spec:
+         prometheus.io/scrape: "true"
+         prometheus.io/path: "/actuator/prometheus"
+         prometheus.io/port: "8081"
++        security.deployaz.io/trivy-scan-passed: "false"
++        security.deployaz.io/scanned-sha: "unscanned"
+     spec:
+       # Deliberately NOT bound to any Vault role -- tenant-b-sa has no
+       # matching entry in auth/kubernetes/role/*, so DEPLOYAZ_SECRETS_REQUIRE

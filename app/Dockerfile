@@ -12,5 +12,5 @@ RUN addgroup -S app && adduser -S app -G app
 WORKDIR /app
 COPY --from=build /build/target/*.jar app.jar
 USER app
-EXPOSE 8080
+EXPOSE 8080 8081
 ENTRYPOINT ["java", "-jar", "/app/app.jar"]

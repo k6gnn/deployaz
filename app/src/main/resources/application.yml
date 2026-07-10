@@ -2,6 +2,8 @@ server:
   port: 8080
 
 management:
+  server:
+    port: 8081
   endpoints:
     web:
       exposure:
@@ -16,3 +18,11 @@ management:
 spring:
   application:
     name: deployaz-demo
+
+deployaz:
+  secrets:
+    # Only "true" in real deployments (set via env var in k8s manifests).
+    # Left false here so `mvn verify` in CI and local `mvn spring-boot:run`
+    # don't require a running Vault agent to inject the file.
+    require: false
+    db-password-path: /vault/secrets/db-password

@@ -17,7 +17,21 @@ env:
   IMAGE_NAME: k6gnn/deployaz-demo
 
 jobs:
+  secret-scan:
+    # Runs first, on every push AND pull_request, against the full history --
+    # catches a committed secret before it ever reaches a build step or a log.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Scan for committed secrets (gitleaks)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   test:
+    needs: secret-scan
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -32,7 +46,7 @@ jobs:
       - name: Run tests
         run: mvn -B clean verify
 
-  build-and-push:
+  build-scan-push:
     needs: test
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
@@ -42,31 +56,57 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Build image locally (not pushed yet)
+        uses: docker/build-push-action@v5
+        with:
+          context: app
+          load: true
+          push: false
+          tags: local-scan:${{ github.sha }}
+
+      - name: Scan image for CRITICAL/HIGH CVEs (Trivy)
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: local-scan:${{ github.sha }}
+          severity: "CRITICAL,HIGH"
+          exit-code: "1"
+          ignore-unfixed: true
+          format: table
+        # If this step fails, the job stops here -- nothing below runs, so a
+        # vulnerable image is never pushed to GHCR and never reaches
+        # k8s/*/deployment.yaml. This is the CI-time gate. Gatekeeper (Phase
+        # 3, admission-time) is the second, independent gate in case an image
+        # ever reaches the registry any other way (e.g. a manual push).
+
       - name: Log in to GHCR
+        if: success()
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push image
-        uses: docker/build-push-action@v5
-        with:
-          context: app
-          push: true
-          tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+      - name: Tag and push scanned image
+        if: success()
+        run: |
+          docker tag local-scan:${{ github.sha }} ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          docker tag local-scan:${{ github.sha }} ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
 
-      - name: Update GitOps manifests with new image tag
+      - name: Update GitOps manifests with new image tag and scan status
+        if: success()
         run: |
           # Both tenants run the same image (tenant-b is synthetic, proving platform
           # isolation rather than app diversity) -- so both deployment manifests need
           # the tag bump, or tenant-b silently stops getting updates after this point.
-          sed -i "s|image: .*deployaz-demo:.*|image: ${REGISTRY}/${IMAGE_NAME}:${{ github.sha }}|" k8s/base/deployment.yaml
-          sed -i "s|image: .*deployaz-demo:.*|image: ${REGISTRY}/${IMAGE_NAME}:${{ github.sha }}|" k8s/tenants/tenant-b/deployment.yaml
+          for f in k8s/base/deployment.yaml k8s/tenants/tenant-b/deployment.yaml; do
+            sed -i "s|image: .*deployaz-demo:.*|image: ${REGISTRY}/${IMAGE_NAME}:${{ github.sha }}|" "$f"
+            sed -i 's|security.deployaz.io/trivy-scan-passed: .*|security.deployaz.io/trivy-scan-passed: "true"|' "$f"
+            sed -i "s|security.deployaz.io/scanned-sha: .*|security.deployaz.io/scanned-sha: \"${{ github.sha }}\"|" "$f"
+          done
           git config user.name "deployaz-ci"
           git config user.email "ci@deployaz.local"
           git add k8s/base/deployment.yaml k8s/tenants/tenant-b/deployment.yaml
-          git diff --cached --quiet || git commit -m "ci: bump image to ${{ github.sha }}"
+          git diff --cached --quiet || git commit -m "ci: bump image to ${{ github.sha }}, mark Trivy-scanned"
           git push
