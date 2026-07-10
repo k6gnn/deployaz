@@ -65,7 +65,13 @@ jobs:
           tags: local-scan:${{ github.sha }}
 
       - name: Scan image for CRITICAL/HIGH CVEs (Trivy)
-        uses: aquasecurity/trivy-action@0.24.0
+        # Pinned to the full commit SHA, not a tag -- trivy-action had a real
+        # supply-chain attack (March 2026, TeamPCP) where 75+ version tags
+        # were force-pushed to malicious commits. GitHub's "Immutable
+        # release" badge does NOT prevent this (confirmed by Aqua's own
+        # incident writeup) -- only a full SHA is a reliable pin. This SHA
+        # is aquasecurity/trivy-action's v0.36.0 tag commit.
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
           image-ref: local-scan:${{ github.sha }}
           severity: "CRITICAL,HIGH"
