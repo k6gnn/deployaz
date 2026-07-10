@@ -115,4 +115,10 @@ jobs:
           git config user.email "ci@deployaz.local"
           git add k8s/base/deployment.yaml k8s/tenants/tenant-b/deployment.yaml
           git diff --cached --quiet || git commit -m "ci: bump image to ${{ github.sha }}, mark Trivy-scanned"
+          # main may have moved since this job's checkout (e.g. someone
+          # pushed another commit while this run was still building/scanning
+          # the image) -- rebase onto the latest before pushing, or this
+          # push is correctly rejected as a non-fast-forward.
+          git fetch origin main
+          git rebase origin/main
           git push
