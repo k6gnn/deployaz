@@ -5,16 +5,22 @@ metadata:
   namespace: deployaz-demo
 spec:
   hard:
-    requests.cpu: "1"
+    # Was "1" -- confirmed hit during a `rollout restart` (see events): a
+    # transient 3rd overlapping pod during rollout needs 3 x 350m = 1050m
+    # requests.cpu, just over the old 1000m cap. Same root cause as the
+    # limits.cpu bump above (Vault sidecar's requests.cpu=250m/pod on top
+    # of the app's own 100m). "1500m" covers 3 concurrent pods (1050m)
+    # with margin, consistent with the limits.cpu fix.
+    requests.cpu: "1500m"
     requests.memory: 1Gi
     # Was "2" -- too tight once the Vault Agent Injector sidecar started
     # roughly doubling each pod's CPU limit (app's own 500m + Vault's
     # ~500m = 1000m/pod, vs 500m/pod before Phase 3). A RollingUpdate needs
     # transient headroom for old+new pods to coexist during rollout: worst
     # case here is 1 old (500m) + 2 new (1000m each) = 2500m. "3" (3000m)
-    # covers that with margin. requests.cpu/memory are untouched -- they
-    # were never the bottleneck (confirmed via kubectl describe
-    # resourcequota; only limits.cpu was ever exceeded).
+    # covers that with margin. requests.memory is untouched -- it
+    # was never the bottleneck (confirmed via kubectl describe
+    # resourcequota; only limits.cpu and requests.cpu were ever exceeded).
     limits.cpu: "3"
     limits.memory: 2Gi
     pods: "10"
