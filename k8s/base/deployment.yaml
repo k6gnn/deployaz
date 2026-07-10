@@ -25,8 +25,8 @@ spec:
         # hardening step beyond this phase would be image signing (cosign)
         # verified by Gatekeeper/Kyverno directly against the registry,
         # rather than trusting an annotation the pipeline wrote.
-        security.deployaz.io/trivy-scan-passed: "false"
-        security.deployaz.io/scanned-sha: "unscanned"
+        security.deployaz.io/trivy-scan-passed: "true"
+        security.deployaz.io/scanned-sha: "9a40b4b22b65b9ff30f5f9a5d489257a832cb121"
         # --- Vault Agent Injector (Phase 3) ---
         # Injector mutates this pod at admission time: adds an init container
         # that fetches the secret once before the app starts, plus a sidecar
@@ -46,7 +46,7 @@ spec:
       containers:
         - name: deployaz-demo
           # CI overwrites this tag on every push to main — do not hand-edit the tag.
-          image: ghcr.io/k6gnn/deployaz-demo:a6f26998d96c25e3f7392ba45e8ba7bb19178ef9
+          image: ghcr.io/k6gnn/deployaz-demo:9a40b4b22b65b9ff30f5f9a5d489257a832cb121
           ports:
             - name: http
               containerPort: 8080

@@ -18,8 +18,8 @@ spec:
         prometheus.io/scrape: "true"
         prometheus.io/path: "/actuator/prometheus"
         prometheus.io/port: "8081"
-        security.deployaz.io/trivy-scan-passed: "false"
-        security.deployaz.io/scanned-sha: "unscanned"
+        security.deployaz.io/trivy-scan-passed: "true"
+        security.deployaz.io/scanned-sha: "9a40b4b22b65b9ff30f5f9a5d489257a832cb121"
     spec:
       # Deliberately NOT bound to any Vault role -- tenant-b-sa has no
       # matching entry in auth/kubernetes/role/*, so DEPLOYAZ_SECRETS_REQUIRE
@@ -31,7 +31,7 @@ spec:
         - name: deployaz-tenant-b
           # Same image as tenant-a -- this is a synthetic second tenant proving the
           # PLATFORM's isolation, not a different app. CI updates this tag too (see ci-cd.yml).
-          image: ghcr.io/k6gnn/deployaz-demo:a6f26998d96c25e3f7392ba45e8ba7bb19178ef9
+          image: ghcr.io/k6gnn/deployaz-demo:9a40b4b22b65b9ff30f5f9a5d489257a832cb121
           ports:
             - name: http
               containerPort: 8080
