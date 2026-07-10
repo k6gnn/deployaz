@@ -7,7 +7,17 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>3.3.2</version>
+        <!-- Was 3.3.2; that branch is fully EOL (no more OSS patches) and
+             Trivy correctly flagged real CVEs in its bundled Tomcat, Jackson,
+             and Spring Framework versions. 3.5.16 is the final released
+             3.5.x patch: same Spring Boot major version (3.x), so no
+             breaking API changes, just current, patched dependency
+             versions. 3.5.x itself reached EOL June 30, 2026, so this buys
+             time, not a permanent fix; a deliberate, separate Spring Boot
+             4.x migration (modularized starters, actuator security by
+             default, Jackson 3) should be planned as its own piece of work,
+             not folded into this security-hardening phase. -->
+        <version>3.5.16</version>
         <relativePath/>
     </parent>
 
