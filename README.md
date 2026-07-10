@@ -1,8 +1,8 @@
 # DeployAZ Platform
 
 A multi-tenant deployment platform, built in public. Real production shape at
-every stage — CI, containerization, GitOps, monitoring, isolation, secrets
-management, and supply-chain security — proven end-to-end with real
+every stage - CI, containerization, GitOps, monitoring, isolation, secrets
+management, and supply-chain security - proven end-to-end with real
 verification at each step, not assumed.
 
 ## Structure
@@ -19,7 +19,7 @@ docs/           Setup + verification instructions per phase
 
 ## Status
 **Phases 1-3 complete.** Single-tenant pipeline, two isolated tenants,
-secrets management, CVE scanning, and admission-time policy enforcement --
+secrets management, CVE scanning, and admission-time policy enforcement -
 all built and verified against a real cluster, not just written. Not yet
 self-service (Phase 4).
 
