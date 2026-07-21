@@ -1,0 +1,18 @@
+# Loki + Promtail via the grafana/loki-stack chart, sized for a local kind
+# cluster. Promtail runs as a DaemonSet and ships logs from EVERY pod on
+# every node -- which is exactly why logging works for arbitrary tenant apps
+# with zero tenant-side integration, unlike metrics (which require the app
+# to expose an endpoint). Honest scope note: single-binary Loki with
+# filesystem storage, no retention tuning, no auth -- fine for this cluster,
+# not a production log platform.
+loki:
+  enabled: true
+  isDefault: false
+  persistence:
+    enabled: false
+promtail:
+  enabled: true
+grafana:
+  # Grafana already exists from the kube-prometheus-stack install (Phase 1).
+  # Loki is added to it as a datasource -- see docs/PHASE4_SETUP.md.
+  enabled: false

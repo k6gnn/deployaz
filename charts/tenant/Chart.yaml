@@ -1,0 +1,13 @@
+apiVersion: v2
+name: deployaz-tenant
+description: >
+  Generic tenant stamp for the DeployAZ platform. One chart, N tenants:
+  the ApplicationSet in gitops/tenant-applicationset.yaml instantiates this
+  chart once per tenants/<name>/config.json file, so onboarding a tenant
+  never means writing Kubernetes YAML by hand again. Every tenant gets the
+  full Phase 2 isolation layer (namespace, RBAC, NetworkPolicy,
+  ResourceQuota, LimitRange) automatically -- isolation is not optional
+  and not something a tenant can opt out of.
+type: application
+version: 0.1.0
+appVersion: "phase-4"

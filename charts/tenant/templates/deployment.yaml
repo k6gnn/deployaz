@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.tenant.name }}
+  namespace: deployaz-{{ .Values.tenant.name }}
+  labels:
+    app: {{ .Values.tenant.name }}
+    deployaz.io/tenant: {{ .Values.tenant.name | quote }}
+spec:
+  replicas: {{ .Values.tenant.replicas | int }}
+  selector:
+    matchLabels:
+      app: {{ .Values.tenant.name }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Values.tenant.name }}
+      annotations:
+        # Gatekeeper admission inputs -- written into tenants/<name>/config.json
+        # by the onboarding workflow only after a real Trivy scan passed.
+        security.deployaz.io/trivy-scan-passed: {{ .Values.tenant.trivyScanPassed | quote }}
+        security.deployaz.io/scanned-sha: {{ .Values.tenant.scannedSha | quote }}
+    spec:
+      serviceAccountName: tenant-{{ .Values.tenant.name }}-sa
+      containers:
+        - name: app
+          image: {{ .Values.tenant.image }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.tenant.port | int }}
+          resources:
+            requests:
+              cpu: {{ .Values.resources.requests.cpu }}
+              memory: {{ .Values.resources.requests.memory }}
+            limits:
+              cpu: {{ .Values.resources.limits.cpu }}
+              memory: {{ .Values.resources.limits.memory }}
+          # Honest tradeoff: arbitrary tenant apps have no guaranteed health
+          # endpoint, so only a TCP liveness check is universal. HTTP
+          # readiness paths become a tenant config option later.
+          livenessProbe:
+            tcpSocket:
+              port: {{ .Values.tenant.port | int }}
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          readinessProbe:
+            tcpSocket:
+              port: {{ .Values.tenant.port | int }}
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]

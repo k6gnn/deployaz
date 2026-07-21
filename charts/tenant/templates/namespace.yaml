@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: deployaz-{{ .Values.tenant.name }}
+  labels:
+    app.kubernetes.io/part-of: deployaz-platform
+    deployaz.io/tenant: {{ .Values.tenant.name | quote }}
+    # Gatekeeper's Trivy-scan constraint selects namespaces by this label.
+    deployaz.io/tenant-workloads: "true"

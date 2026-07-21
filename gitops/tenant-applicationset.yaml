@@ -1,0 +1,56 @@
+# The Phase 4 core: one ApplicationSet watches tenants/*/config.json in this
+# repo. Every file there becomes a full ArgoCD Application instantiating
+# charts/tenant with that tenant's values. Adding a tenant = the onboarding
+# workflow committing one JSON file. Removing a tenant = deleting the file
+# (prune tears everything down). No kubectl, ever.
+#
+# Note the trust chain, stated plainly: the ONLY writer of tenants/ files is
+# .github/workflows/onboard-tenant.yml, which only writes a config after the
+# tenant image passed a Trivy scan. Gatekeeper then independently re-checks
+# the scan annotations at admission time. Two gates, same as Phase 3.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: deployaz-tenants
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - git:
+        repoURL: https://github.com/k6gnn/deployaz.git
+        revision: main
+        files:
+          - path: "tenants/*/config.json"
+  template:
+    metadata:
+      name: "tenant-{{ .name }}"
+      labels:
+        deployaz.io/tenant: "{{ .name }}"
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/k6gnn/deployaz.git
+        targetRevision: main
+        path: charts/tenant
+        helm:
+          valuesObject:
+            tenant:
+              name: "{{ .name }}"
+              image: "{{ .image }}"
+              port: "{{ .port }}"
+              host: "{{ .host }}"
+              replicas: "{{ .replicas }}"
+              trivyScanPassed: "{{ .trivyScanPassed }}"
+              scannedSha: "{{ .scannedSha }}"
+      destination:
+        server: https://kubernetes.default.svc
+        # Chart manages its own Namespace object; this is only where ArgoCD
+        # tracks non-namespaced state.
+        namespace: "deployaz-{{ .name }}"
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - ServerSideApply=true
