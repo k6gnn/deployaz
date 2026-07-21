@@ -1,0 +1,10 @@
+{
+  "name": "sample",
+  "repoUrl": "https://github.com/k6gnn/sample-tenant-app",
+  "image": "ghcr.io/k6gnn/deployaz-tenant-sample:5ca13614f894",
+  "port": 8080,
+  "host": "sample.deployaz.local",
+  "replicas": 1,
+  "trivyScanPassed": "true",
+  "scannedSha": "5ca13614f894"
+}
