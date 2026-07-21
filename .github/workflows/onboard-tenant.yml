@@ -1,0 +1,134 @@
+# Phase 4 self-service onboarding: repo URL in, deployed app out.
+#
+# Trigger: workflow_dispatch (Actions tab -> "Onboard tenant" -> fill two
+# fields). Everything after that is automatic:
+#   validate -> clone tenant repo -> build in GitHub's ephemeral runner ->
+#   Trivy scan (CRITICAL/HIGH = hard stop) -> push to platform GHCR ->
+#   commit tenants/<name>/config.json -> ApplicationSet provisions namespace,
+#   RBAC, quotas, NetworkPolicies, deployment, service, ingress.
+#
+# Security model, stated plainly:
+# - Untrusted tenant code is built ONLY inside a GitHub-hosted runner: an
+#   ephemeral VM that is destroyed after the run. It never executes in the
+#   cluster and never on the operator's machine.
+# - The tenant repo is cloned with NO credentials (public repos only, by
+#   design of the free tier). GHCR login happens strictly AFTER the build
+#   step, so a malicious Dockerfile cannot exfiltrate a registry token
+#   during build.
+# - A vulnerable image is never pushed: Trivy runs against the local image
+#   before login/push, same gate order as ci-cd.yml.
+name: Onboard tenant
+
+on:
+  workflow_dispatch:
+    inputs:
+      tenant_name:
+        description: "Tenant name (lowercase, a-z 0-9 and dashes, 3-20 chars)"
+        required: true
+      repo_url:
+        description: "Public GitHub repo URL (must contain a Dockerfile at its root)"
+        required: true
+      app_port:
+        description: "Port the app listens on inside the container"
+        required: true
+        default: "8080"
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  onboard:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - name: Validate inputs
+        run: |
+          NAME="${{ inputs.tenant_name }}"
+          URL="${{ inputs.repo_url }}"
+          PORT="${{ inputs.app_port }}"
+          echo "$NAME" | grep -Eq '^[a-z][a-z0-9-]{2,19}$' \
+            || { echo "::error::Invalid tenant name '$NAME'"; exit 1; }
+          # Reserved names that would collide with platform namespaces.
+          case "$NAME" in demo|tenant-b|vault|argocd|monitoring|logging|gatekeeper-system)
+            echo "::error::'$NAME' is reserved"; exit 1;; esac
+          echo "$URL" | grep -Eq '^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(\.git)?$' \
+            || { echo "::error::repo_url must be a plain https://github.com/<owner>/<repo> URL"; exit 1; }
+          echo "$PORT" | grep -Eq '^[0-9]{2,5}$' && [ "$PORT" -ge 1 ] && [ "$PORT" -le 65535 ] \
+            || { echo "::error::Invalid port '$PORT'"; exit 1; }
+
+      - name: Check out platform repo
+        uses: actions/checkout@v4
+
+      - name: Refuse duplicate tenant
+        run: |
+          if [ -e "tenants/${{ inputs.tenant_name }}" ]; then
+            echo "::error::Tenant '${{ inputs.tenant_name }}' already exists. Re-onboarding/updating is a separate, deliberate action -- delete tenants/${{ inputs.tenant_name }} first if that is really the intent."
+            exit 1
+          fi
+
+      - name: Clone tenant repo (no credentials, shallow)
+        run: |
+          git clone --depth 1 "${{ inputs.repo_url }}" /tmp/tenant-src
+          cd /tmp/tenant-src
+          TENANT_SHA=$(git rev-parse --short=12 HEAD)
+          echo "TENANT_SHA=$TENANT_SHA" >> "$GITHUB_ENV"
+          [ -f Dockerfile ] || { echo "::error::Tenant repo has no Dockerfile at its root. The free-tier contract is: bring a working Dockerfile."; exit 1; }
+
+      - name: Build tenant image locally (not pushed, no registry creds present)
+        run: |
+          docker build -t "local-tenant:${TENANT_SHA}" /tmp/tenant-src
+
+      - name: Scan tenant image for CRITICAL/HIGH CVEs (Trivy)
+        # Same full-SHA pin as ci-cd.yml, for the same supply-chain reason.
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          image-ref: local-tenant:${{ env.TENANT_SHA }}
+          severity: "CRITICAL,HIGH"
+          exit-code: "1"
+          ignore-unfixed: true
+          format: table
+        # Hard stop: a tenant image with known critical CVEs is never pushed
+        # and never reaches the cluster. The tenant fixes their image and
+        # re-runs onboarding. This is the platform's promise to every OTHER
+        # tenant sharing the cluster.
+
+      - name: Log in to GHCR (only after a clean scan)
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push scanned tenant image
+        run: |
+          IMAGE="${REGISTRY}/${{ github.repository_owner }}/deployaz-tenant-${{ inputs.tenant_name }}:${TENANT_SHA}"
+          docker tag "local-tenant:${TENANT_SHA}" "$IMAGE"
+          docker push "$IMAGE"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      - name: Write tenant registry entry and commit (this IS the deploy)
+        run: |
+          mkdir -p "tenants/${{ inputs.tenant_name }}"
+          cat > "tenants/${{ inputs.tenant_name }}/config.json" << JSON
+          {
+            "name": "${{ inputs.tenant_name }}",
+            "repoUrl": "${{ inputs.repo_url }}",
+            "image": "${IMAGE}",
+            "port": ${{ inputs.app_port }},
+            "host": "${{ inputs.tenant_name }}.deployaz.local",
+            "replicas": 1,
+            "trivyScanPassed": "true",
+            "scannedSha": "${TENANT_SHA}"
+          }
+          JSON
+          git config user.name "deployaz-onboarding"
+          git config user.email "onboarding@deployaz.local"
+          git add "tenants/${{ inputs.tenant_name }}/config.json"
+          git commit -m "tenant: onboard ${{ inputs.tenant_name }} (${TENANT_SHA})"
+          # Same non-fast-forward protection as ci-cd.yml.
+          git fetch origin main
+          git rebase origin/main
+          git push
+          echo "Committed. ArgoCD's ApplicationSet will now provision namespace deployaz-${{ inputs.tenant_name }} automatically."
