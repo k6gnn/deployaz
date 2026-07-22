@@ -13,7 +13,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  # Fixed name so it matches k8s/base/deployment.yaml exactly.
+  # Fixed name; consumed by tenants/demo and tenants/tenant-b registry entries.
   IMAGE_NAME: k6gnn/deployaz-demo
 
 jobs:
@@ -80,7 +80,7 @@ jobs:
           format: table
         # If this step fails, the job stops here -- nothing below runs, so a
         # vulnerable image is never pushed to GHCR and never reaches
-        # k8s/*/deployment.yaml. This is the CI-time gate. Gatekeeper (Phase
+        # the tenant registry. This is the CI-time gate. Gatekeeper (Phase
         # 3, admission-time) is the second, independent gate in case an image
         # ever reaches the registry any other way (e.g. a manual push).
 
@@ -100,20 +100,26 @@ jobs:
           docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
           docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
 
-      - name: Update GitOps manifests with new image tag and scan status
+      - name: Update tenant registry with new image tag and scan status
         if: success()
         run: |
-          # Both tenants run the same image (tenant-b is synthetic, proving platform
-          # isolation rather than app diversity) -- so both deployment manifests need
-          # the tag bump, or tenant-b silently stops getting updates after this point.
-          for f in k8s/base/deployment.yaml k8s/tenants/tenant-b/deployment.yaml; do
-            sed -i "s|image: .*deployaz-demo:.*|image: ${REGISTRY}/${IMAGE_NAME}:${{ github.sha }}|" "$f"
-            sed -i 's|security.deployaz.io/trivy-scan-passed: .*|security.deployaz.io/trivy-scan-passed: "true"|' "$f"
-            sed -i "s|security.deployaz.io/scanned-sha: .*|security.deployaz.io/scanned-sha: \"${{ github.sha }}\"|" "$f"
+          # Phase 4.5: the hand-written k8s/base and k8s/tenants manifests are
+          # gone. Both platform tenants (demo, tenant-b) are ordinary registry
+          # entries now -- same shape as onboarded tenants -- so the image bump
+          # is a config.json update, not a sed over YAML. Both run the same
+          # image (tenant-b is synthetic, proving platform isolation rather
+          # than app diversity), so both entries get the bump, or tenant-b
+          # silently stops receiving updates.
+          IMG="${REGISTRY}/${IMAGE_NAME}:${{ github.sha }}"
+          for t in demo tenant-b; do
+            jq --arg img "$IMG" --arg sha "${{ github.sha }}" \
+              '.image = $img | .scannedSha = $sha | .trivyScanPassed = "true"' \
+              "tenants/$t/config.json" > /tmp/cfg.json
+            mv /tmp/cfg.json "tenants/$t/config.json"
           done
           git config user.name "deployaz-ci"
           git config user.email "ci@deployaz.local"
-          git add k8s/base/deployment.yaml k8s/tenants/tenant-b/deployment.yaml
+          git add tenants/demo/config.json tenants/tenant-b/config.json
           git diff --cached --quiet || git commit -m "ci: bump image to ${{ github.sha }}, mark Trivy-scanned"
           # main may have moved since this job's checkout (e.g. someone
           # pushed another commit while this run was still building/scanning

@@ -1,13 +1,18 @@
-# The Phase 4 core: one ApplicationSet watches tenants/*/config.json in this
-# repo. Every file there becomes a full ArgoCD Application instantiating
-# charts/tenant with that tenant's values. Adding a tenant = the onboarding
-# workflow committing one JSON file. Removing a tenant = deleting the file
-# (prune tears everything down). No kubectl, ever.
+# The Phase 4 core, extended in Phase 4.5: one ApplicationSet watches
+# tenants/*/config.json in this repo. Every file there becomes a full ArgoCD
+# Application instantiating charts/tenant with that tenant's values. As of
+# Phase 4.5 this includes the platform's own demo app and tenant-b -- the
+# hand-written k8s/base and k8s/tenants trees are gone. One shape, N tenants.
 #
-# Note the trust chain, stated plainly: the ONLY writer of tenants/ files is
-# .github/workflows/onboard-tenant.yml, which only writes a config after the
-# tenant image passed a Trivy scan. Gatekeeper then independently re-checks
-# the scan annotations at admission time. Two gates, same as Phase 3.
+# missingkey=error is deliberate and unforgiving: every config.json MUST
+# contain every key referenced below (schema v2). A schema change and all
+# config.json updates must always land in the SAME commit.
+#
+# Trust chain, stated plainly: the ONLY writer of tenants/ files is
+# .github/workflows/onboard-tenant.yml (new tenants) and ci-cd.yml (image
+# bumps for demo/tenant-b), both of which only write after a Trivy scan
+# passed. Gatekeeper then independently re-checks the scan annotations at
+# admission time. Two gates, same as Phase 3.
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
@@ -25,15 +30,10 @@ spec:
   template:
     metadata:
       name: "tenant-{{ .name }}"
-      # Hardening added post-verification: makes Application deletion cascade
-      # deterministically to all child resources. Teardown was verified to
-      # work without it (ArgoCD prune removed everything incl. the namespace,
-      # just slower than the initial watch suggested), but the finalizer
-      # removes the ambiguity.
-      finalizers:
-        - resources-finalizer.argocd.argoproj.io
       labels:
         deployaz.io/tenant: "{{ .name }}"
+      finalizers:
+        - resources-finalizer.argocd.argoproj.io
     spec:
       project: default
       source:
@@ -45,11 +45,21 @@ spec:
             tenant:
               name: "{{ .name }}"
               image: "{{ .image }}"
-              port: "{{ .port }}"
+              port: {{ .port }}
               host: "{{ .host }}"
-              replicas: "{{ .replicas }}"
+              replicas: {{ .replicas }}
               trivyScanPassed: "{{ .trivyScanPassed }}"
               scannedSha: "{{ .scannedSha }}"
+              healthPath: "{{ .healthPath }}"
+              healthPort: {{ .healthPort }}
+              metrics:
+                enabled: {{ .metrics.enabled }}
+                port: {{ .metrics.port }}
+                path: "{{ .metrics.path }}"
+              vault:
+                enabled: {{ .vault.enabled }}
+                role: "{{ .vault.role }}"
+                secretPath: "{{ .vault.secretPath }}"
       destination:
         server: https://kubernetes.default.svc
         # Chart manages its own Namespace object; this is only where ArgoCD

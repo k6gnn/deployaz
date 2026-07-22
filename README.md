@@ -7,17 +7,18 @@ end-to-end with real verification at each step, not assumed.
 
 ## Structure
 ```
-app/            Spring Boot demo service (the original "tenant" workload)
-charts/tenant/  Generic tenant Helm chart -- one chart, N tenants; every
-                tenant gets the full isolation layer automatically
-tenants/        Tenant registry -- one config.json per onboarded tenant,
-                written ONLY by the onboarding workflow after a clean scan
-k8s/base/       Tenant-a manifests -- what ArgoCD watches
-k8s/tenants/    Hand-written tenant-b (kept as the pre-Phase-4 shape)
+app/            Spring Boot demo service (the platform's own tenant workload)
+charts/tenant/  THE tenant shape -- one chart, N tenants; every tenant
+                (including the demo app itself) gets the full isolation
+                layer automatically
+tenants/        Tenant registry -- one config.json (schema v2) per tenant;
+                written by the onboarding workflow (new tenants) and
+                ci-cd.yml (image bumps), always after a clean scan
 k8s/vault/      Vault install values + one-time setup script
 k8s/gatekeeper/ Admission-time policy: blocks unscanned images (label-based)
 k8s/logging/    Loki + Promtail values (centralized logs, all pods)
-gitops/         ArgoCD Application + ApplicationSet definitions
+gitops/         ArgoCD ApplicationSet -- the single source of all tenant
+                Applications since Phase 4.5
 docs/           Setup + verification instructions per phase, and the
                 operations runbook (OPERATIONS.md) with every real
                 incident and its root cause
@@ -30,7 +31,16 @@ admission, RBAC/network/quota isolation on the auto-created tenant,
 centralized logs, Git-driven teardown, re-onboarding -- was executed
 against the live cluster. Record: `docs/PHASE4_SETUP.md`. Operational
 incidents and their root causes: `docs/OPERATIONS.md`.
-Next phase: cloud migration (real cluster, domain, TLS) -- the operational
+**Phase 4.5 (pre-cloud hardening, part 1: consolidation) applied.** The
+three parallel tenant implementations (hand-written k8s/base, hand-written
+k8s/tenants/tenant-b, and the chart) are collapsed into one: every tenant is
+a registry entry rendered through charts/tenant. Found and fixed during
+consolidation: the Phase 4 chart never denied egress -- onboarded tenants
+had unrestricted network egress. The chart now enforces the full Phase 2
+posture for every tenant. Record and cutover procedure:
+`docs/PHASE45_CONSOLIDATION.md`.
+Next: pre-cloud hardening part 2 (Vault raft mode) and part 3 (cosign),
+then cloud migration (real cluster, domain, TLS) -- the operational
 failures documented in OPERATIONS.md are its justification.
 
 ## Setup docs
@@ -62,7 +72,8 @@ failures documented in OPERATIONS.md are its justification.
   future phase with real monthly cost.
 - Onboarding is operator-triggered (workflow_dispatch), deliberately, while
   the cluster is a laptop. The pipeline after the trigger is zero-touch.
-- Vault runs in dev mode -- proves the pattern, not production-grade.
+- Vault runs in dev mode -- proves the pattern, not production-grade
+  (next hardening step, before cloud).
 - Gatekeeper trusts a CI-written annotation, not a cryptographic signature;
   cosign image signing is the documented hardening step.
 - No automatic rebuild when a tenant's repo changes (webhook trigger is

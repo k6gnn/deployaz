@@ -1,6 +1,10 @@
-# Same isolation posture as Phase 2 tenants: default-deny everything, then
-# explicitly allow only ingress-nginx (user traffic) and monitoring
-# (Prometheus scrapes). Tenant-to-tenant traffic is blocked by omission.
+# Phase 4.5: the chart now enforces the FULL Phase 2 posture, including
+# egress. The Phase 4 chart only denied Ingress -- a real regression found
+# during consolidation: onboarded tenants had unrestricted egress (a
+# free-tier stranger's container could reach anywhere). Fixed: default-deny
+# both directions, DNS explicitly allowed, Vault egress only for
+# vault-enabled tenants, monitoring ingress only for metrics-enabled
+# tenants and only on the metrics port.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -10,6 +14,25 @@ spec:
   podSelector: {}
   policyTypes:
     - Ingress
+    - Egress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: deployaz-{{ .Values.tenant.name }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -30,6 +53,7 @@ spec:
       ports:
         - protocol: TCP
           port: {{ .Values.tenant.port | int }}
+{{- if .Values.tenant.metrics.enabled }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -47,3 +71,32 @@ spec:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: monitoring
+      ports:
+        - protocol: TCP
+          port: {{ .Values.tenant.metrics.port | int }}
+{{- end }}
+{{- if .Values.tenant.vault.enabled }}
+---
+# Without this, default-deny-all blocks the Vault Agent's path to Vault on
+# 8200 -- the exact silent failure documented in docs/OPERATIONS.md
+# (green pods, broken secrets layer, invisible until logs were centralized).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-to-vault
+  namespace: deployaz-{{ .Values.tenant.name }}
+spec:
+  podSelector:
+    matchLabels:
+      app: {{ .Values.tenant.name }}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: vault
+      ports:
+        - protocol: TCP
+          port: 8200
+{{- end }}

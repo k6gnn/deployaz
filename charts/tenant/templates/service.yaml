@@ -12,3 +12,8 @@ spec:
     - name: http
       port: 80
       targetPort: {{ .Values.tenant.port | int }}
+{{- if .Values.tenant.metrics.enabled }}
+    - name: management
+      port: {{ .Values.tenant.metrics.port | int }}
+      targetPort: {{ .Values.tenant.metrics.port | int }}
+{{- end }}

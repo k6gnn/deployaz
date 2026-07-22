@@ -4,7 +4,7 @@
 # fields). Everything after that is automatic:
 #   validate -> clone tenant repo -> build in GitHub's ephemeral runner ->
 #   Trivy scan (CRITICAL/HIGH = hard stop) -> push to platform GHCR ->
-#   commit tenants/<name>/config.json -> ApplicationSet provisions namespace,
+#   commit tenants/<name>/config.json (schema v2 -- every key present,\n#   optional features written as enabled:false, because the ApplicationSet\n#   renders with missingkey=error) -> ApplicationSet provisions namespace,
 #   RBAC, quotas, NetworkPolicies, deployment, service, ingress.
 #
 # Security model, stated plainly:
@@ -120,7 +120,11 @@ jobs:
             "host": "${{ inputs.tenant_name }}.deployaz.local",
             "replicas": 1,
             "trivyScanPassed": "true",
-            "scannedSha": "${TENANT_SHA}"
+            "scannedSha": "${TENANT_SHA}",
+            "healthPath": "",
+            "healthPort": 0,
+            "metrics": { "enabled": false, "port": 0, "path": "" },
+            "vault": { "enabled": false, "role": "", "secretPath": "" }
           }
           JSON
           git config user.name "deployaz-onboarding"

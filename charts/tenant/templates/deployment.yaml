@@ -20,6 +20,25 @@ spec:
         # by the onboarding workflow only after a real Trivy scan passed.
         security.deployaz.io/trivy-scan-passed: {{ .Values.tenant.trivyScanPassed | quote }}
         security.deployaz.io/scanned-sha: {{ .Values.tenant.scannedSha | quote }}
+{{- if .Values.tenant.metrics.enabled }}
+        prometheus.io/scrape: "true"
+        prometheus.io/path: {{ .Values.tenant.metrics.path | quote }}
+        prometheus.io/port: {{ .Values.tenant.metrics.port | quote }}
+{{- end }}
+{{- if .Values.tenant.vault.enabled }}
+        # Vault Agent Injector (Phase 3 pattern, made generic in Phase 4.5).
+        # The injector mutates this pod at admission: an init container
+        # fetches the secret before the app starts, a sidecar keeps it
+        # renewed. The app never talks to Vault directly. Requires the
+        # matching role/policy from k8s/vault/vault-setup.sh to exist.
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/role: {{ .Values.tenant.vault.role | quote }}
+        vault.hashicorp.com/agent-inject-secret-db-password: {{ .Values.tenant.vault.secretPath | quote }}
+        vault.hashicorp.com/agent-inject-template-db-password: |
+          {{ printf "{{- with secret \"%s\" -}}" .Values.tenant.vault.secretPath }}
+          {{ "{{ .Data.data.db_password }}" }}
+          {{ "{{- end -}}" }}
+{{- end }}
     spec:
       serviceAccountName: tenant-{{ .Values.tenant.name }}-sa
       containers:
@@ -28,6 +47,15 @@ spec:
           ports:
             - name: http
               containerPort: {{ .Values.tenant.port | int }}
+{{- if .Values.tenant.metrics.enabled }}
+            - name: management
+              containerPort: {{ .Values.tenant.metrics.port | int }}
+{{- end }}
+{{- if .Values.tenant.vault.enabled }}
+          env:
+            - name: DEPLOYAZ_SECRETS_REQUIRE
+              value: "true"
+{{- end }}
           resources:
             requests:
               cpu: {{ .Values.resources.requests.cpu }}
@@ -35,9 +63,25 @@ spec:
             limits:
               cpu: {{ .Values.resources.limits.cpu }}
               memory: {{ .Values.resources.limits.memory }}
-          # Honest tradeoff: arbitrary tenant apps have no guaranteed health
-          # endpoint, so only a TCP liveness check is universal. HTTP
-          # readiness paths become a tenant config option later.
+{{- if .Values.tenant.healthPath }}
+          # HTTP probes -- the tenant declared a health endpoint. Delays are
+          # sized for the worst case we actually run (Spring Boot + Vault
+          # init fetch), same values proven in Phase 3 on tenant-a.
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.tenant.healthPath }}
+              port: {{ if .Values.tenant.healthPort }}{{ .Values.tenant.healthPort | int }}{{ else }}{{ .Values.tenant.port | int }}{{ end }}
+            initialDelaySeconds: 25
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.tenant.healthPath }}
+              port: {{ if .Values.tenant.healthPort }}{{ .Values.tenant.healthPort | int }}{{ else }}{{ .Values.tenant.port | int }}{{ end }}
+            initialDelaySeconds: 40
+            periodSeconds: 20
+{{- else }}
+          # No declared health endpoint: TCP checks are the only universal
+          # option for arbitrary tenant apps.
           livenessProbe:
             tcpSocket:
               port: {{ .Values.tenant.port | int }}
@@ -48,6 +92,7 @@ spec:
               port: {{ .Values.tenant.port | int }}
             initialDelaySeconds: 10
             periodSeconds: 5
+{{- end }}
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:

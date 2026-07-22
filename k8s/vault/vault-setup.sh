@@ -29,18 +29,18 @@ echo "==> Writing the synthetic DB_PASSWORD secret (dev/demo value, not a real c
 exec_vault "VAULT_TOKEN=root vault kv put secret/deployaz-demo/db db_password='dev-only-synthetic-value-42'"
 
 echo "==> Writing a Vault policy that can ONLY read tenant-a's own secret path"
-exec_vault "VAULT_TOKEN=root vault policy write tenant-a-policy -<<'EOF'
+exec_vault "VAULT_TOKEN=root vault policy write tenant-demo-policy -<<'EOF'
 path \"secret/data/deployaz-demo/db\" {
   capabilities = [\"read\"]
 }
 EOF"
 
-echo "==> Binding tenant-a-sa (deployaz-demo namespace) to that policy"
-exec_vault "VAULT_TOKEN=root vault write auth/kubernetes/role/tenant-a-role \
-  bound_service_account_names=tenant-a-sa \
+echo "==> Binding tenant-demo-sa (deployaz-demo namespace, chart-generated name) to that policy"
+exec_vault "VAULT_TOKEN=root vault write auth/kubernetes/role/tenant-demo-role \
+  bound_service_account_names=tenant-demo-sa \
   bound_service_account_namespaces=deployaz-demo \
-  policies=tenant-a-policy \
+  policies=tenant-demo-policy \
   ttl=1h"
 
-echo "==> Done. Verify tenant-b-sa (if it exists) is NOT bound to tenant-a-policy --"
+echo "==> Done. Verify tenant-tenant-b-sa is NOT bound to tenant-demo-policy --"
 echo "    that's the isolation boundary this phase is supposed to prove."

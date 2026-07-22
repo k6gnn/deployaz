@@ -1,0 +1,14 @@
+{
+  "name": "demo",
+  "repoUrl": "platform",
+  "image": "ghcr.io/k6gnn/deployaz-demo:9a40b4b22b65b9ff30f5f9a5d489257a832cb121",
+  "port": 8080,
+  "host": "demo.deployaz.local",
+  "replicas": 2,
+  "trivyScanPassed": "true",
+  "scannedSha": "9a40b4b22b65b9ff30f5f9a5d489257a832cb121",
+  "healthPath": "/actuator/health",
+  "healthPort": 8081,
+  "metrics": { "enabled": true, "port": 8081, "path": "/actuator/prometheus" },
+  "vault": { "enabled": true, "role": "tenant-demo-role", "secretPath": "secret/data/deployaz-demo/db" }
+}

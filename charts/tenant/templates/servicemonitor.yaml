@@ -1,0 +1,23 @@
+{{- if .Values.tenant.metrics.enabled }}
+# Requires kube-prometheus-stack's CRDs (installed since Phase 1). Only
+# rendered for tenants that opted into metrics -- logs, by contrast, need
+# nothing from the tenant (Promtail ships every pod's stdout).
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ .Values.tenant.name }}
+  namespace: deployaz-{{ .Values.tenant.name }}
+  labels:
+    release: kube-prometheus-stack   # must match the Helm release name so Prometheus picks it up
+spec:
+  selector:
+    matchLabels:
+      app: {{ .Values.tenant.name }}
+  namespaceSelector:
+    matchNames:
+      - deployaz-{{ .Values.tenant.name }}
+  endpoints:
+    - port: management
+      path: {{ .Values.tenant.metrics.path }}
+      interval: 15s
+{{- end }}
