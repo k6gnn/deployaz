@@ -7,14 +7,12 @@
 # pod template carries security.deployaz.io/trivy-scan-passed: "true" AND
 # security.deployaz.io/scanned-sha matches the SHA embedded in its image tag.
 #
-# LIMITATION, stated plainly: this trusts an annotation the CI pipeline
-# wrote -- it is not a cryptographic attestation. Someone with kubectl access
-# to hand-edit a Deployment (or a compromised CI token) could set the
-# annotation without a real scan having happened. The real production
-# hardening step is image signing (cosign) with Gatekeeper/Kyverno verifying
-# the signature against the registry directly, independent of any
-# self-reported field. That's out of scope for this phase but is the
-# documented next step, not a blind spot being hidden.
+# STATUS UPDATE (Phase 4.5 part 3): the long-documented limitation of this
+# constraint -- it trusts a CI-written annotation -- is now closed by the
+# sigstore policy-controller verifying keyless cosign signatures at
+# admission (k8s/policy-controller/). This constraint stays as defense in
+# depth for one full phase of incident-free cosign enforcement, then may be
+# retired.
 apiVersion: templates.gatekeeper.sh/v1
 kind: ConstraintTemplate
 metadata:
@@ -47,7 +45,15 @@ spec:
           input.review.object.kind == "Deployment"
           annotations := input.review.object.spec.template.metadata.annotations
           container := input.review.object.spec.template.spec.containers[_]
-          image_sha := split(container.image, ":")[1]
+          # Phase 4.5 part 3 fix: the sigstore policy-controller MUTATES image
+          # refs to digest-pinned form (repo:TAG@sha256:DIGEST). The old
+          # split(image, ":")[1] read "TAG@sha256" as the tag and rejected
+          # every mutated Deployment -- two security layers fighting.
+          # Correct parse: drop the digest suffix, then take the LAST
+          # colon-segment (which also fixes registries with ports).
+          image_ref := split(container.image, "@")[0]
+          parts := split(image_ref, ":")
+          image_sha := parts[count(parts) - 1]
           scanned_sha := annotations["security.deployaz.io/scanned-sha"]
           image_sha != scanned_sha
           msg := sprintf("Deployment's image tag (%v) does not match the Trivy-scanned SHA annotation (%v) -- image was swapped after the scan", [image_sha, scanned_sha])
