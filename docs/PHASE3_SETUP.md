@@ -152,6 +152,24 @@ successfully, the constraint isn't being enforced (check
 `kubectl get constrainttemplates` and `kubectl get k8srequiretrivyscan` for
 errors first).
 
+## Known Phase 3 gap, found in Phase 4 (fixed)
+
+The `default-deny-all` NetworkPolicy in deployaz-demo denies **Egress**,
+and the only egress allow rule was DNS (port 53). Phase 3 wired the Vault
+Agent into tenant-a's pods but never opened a network path to Vault on
+port 8200 -- so this phase's own headline feature had no legal route to its
+backend. Init-container secret fetches only ever succeeded through a CNI
+policy-enforcement race at pod startup, and the sidecar's token renewals
+were silently timing out for the entire life of the deployment. Nothing in
+this phase's verification steps caught it, because they all test the
+*startup* path, not the *renewal* path. It was found within hours of
+centralized logging being installed in Phase 4 (the sidecar's errors were
+finally visible) and fixed by `k8s/base/networkpolicy-vault-egress.yaml`.
+Lesson kept for the record: when a workload gains a new network dependency,
+the NetworkPolicy change is part of the feature, and verification must
+cover steady-state behavior, not just first boot. Full incident write-up:
+`docs/OPERATIONS.md`.
+
 ## What Phase 3 deliberately does not include
 
 - Self-service onboarding (Phase 4).

@@ -89,6 +89,14 @@ Add Loki as a Grafana datasource (Grafana from Phase 1):
 Connections -> Data sources -> Add -> Loki ->
 URL `http://loki.logging.svc.cluster.local:3100` -> Save & test.
 
+**Expected: "Save & test" FAILS** with "parse error ... unexpected
+IDENTIFIER" -- this is a known version clash (the deprecated loki-stack
+chart ships Loki 2.6.x; modern Grafana's health check uses newer LogQL),
+not a broken install. The log-volume histogram in Explore fails the same
+way. Actual log queries work fine; verify with the Explore query in the
+verification section below instead of trusting the health check. Details
+and the upgrade plan: `docs/OPERATIONS.md`.
+
 ## Onboarding a tenant (the actual Phase 4 proof)
 
 Use a real public repo with a Dockerfile -- ideally NOT this repo's own app,

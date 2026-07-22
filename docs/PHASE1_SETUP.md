@@ -43,8 +43,14 @@ kubectl cluster-info --context kind-deployaz
 ```
 
 ## 3. Install the ingress controller
+
+Pin to a release tag, never `main` -- same reproducibility rule as the
+ArgoCD install below (an unpinned URL means the doc silently drifts from
+what was actually verified). To see what this cluster actually runs:
+`kubectl get deploy -n ingress-nginx ingress-nginx-controller -o jsonpath='{.spec.template.spec.containers[0].image}'`
+and use the matching `controller-vX.Y.Z` tag in the URL:
 ```bash
-kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
+kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.12.1/deploy/static/provider/kind/deploy.yaml
 kubectl wait --namespace ingress-nginx \
   --for=condition=ready pod \
   --selector=app.kubernetes.io/component=controller \
