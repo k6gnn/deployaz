@@ -54,7 +54,7 @@ kubectl wait --namespace ingress-nginx \
 ## 4. Install ArgoCD
 ```bash
 kubectl create namespace argocd
-kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+kubectl apply --server-side -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/v3.4.5/manifests/install.yaml
 kubectl wait --namespace argocd \
   --for=condition=available deployment/argocd-server --timeout=180s
 ```
