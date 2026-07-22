@@ -145,3 +145,13 @@ Vault sidecar and no metrics. Nothing was red; the pod was simply wrong.
 Lesson: the in-cluster ApplicationSet spec and the repo's chart must move
 together; when they diverge, the failure mode is silently degraded pods,
 not errors. Checking container COUNT (1/1 vs 2/2) caught it.
+
+### Change (2026-07-22, Phase 4.5 part 2): Vault is raft now -- restart procedure CHANGED
+Vault moved from dev mode to Integrated Raft on a PVC. Secrets/config now
+SURVIVE restarts, so "re-run vault-setup.sh after restart" is obsolete.
+The new restart step is UNSEAL: after any reboot, vault-0 comes back
+Running but 0/1 (sealed) -- run
+`kubectl exec -n vault vault-0 -- vault operator unseal <key>` (key stored
+outside the repo). Vault-enabled tenant pods stuck in init recover on
+their own within ~1 min of unsealing. Full runbook:
+docs/PHASE46_VAULT_RAFT.md.

@@ -1,29 +1,64 @@
-# Values for the official HashiCorp Vault Helm chart.
-# Install with:
-#   helm repo add hashicorp https://helm.releases.hashicorp.com
-#   helm install vault hashicorp/vault -n vault -f k8s/vault/vault-values.yaml
+# Values for the official HashiCorp Vault Helm chart -- RAFT MODE (Phase 4.5
+# part 2). Dev mode is gone. Upgrade an existing install with:
+#   helm upgrade vault hashicorp/vault -n vault -f k8s/vault/vault-values.yaml
 #
-# DEV MODE NOTICE (read before you assume this is "production Vault"):
-# server.dev.enabled=true runs Vault in-memory, auto-unsealed, root-token
-# fixed to "root". That is intentional here -- a local kind cluster proving
-# the *pattern* (Agent Injector, KV secrets, no plaintext in Git) rather than
-# running a production Vault (which needs real storage backend, auto-unseal
-# via cloud KMS, TLS, and a proper root-token rotation policy). Do not lift
-# this values file into a real deployment without changing server.dev to
-# server.ha + a real seal/storage config.
+# WHAT CHANGED AND WHY:
+# - server.dev is OFF. Dev mode was in-memory: every vault-0 restart wiped
+#   all tenant secrets, roles and policies (documented repeatedly in
+#   OPERATIONS.md). Disqualifying for anything public.
+# - Storage is Integrated Raft on a PVC -- the same storage shape a cloud
+#   deployment uses, at replicas=1 laptop scale. Data now survives pod AND
+#   node restarts (it does NOT survive `kind delete cluster`).
+# - CONSEQUENCE YOU MUST INTERNALIZE: Vault now starts SEALED after every
+#   restart -- and this cluster restarts a lot. Until an operator unseals
+#   it, running vault-agent sidecars cannot renew and new tenant pods hang
+#   in init. The unseal runbook lives in docs/PHASE46_VAULT_RAFT.md and is
+#   now part of the OPERATIONS.md restart checklist.
+#
+# STILL DELIBERATELY NOT PRODUCTION (arrives with the cloud phase):
+# - No TLS on the listener (in-cluster plaintext; cloud phase adds
+#   cert-manager-issued certs).
+# - Manual unseal with a single key share (prod: 5/3 shares or cloud-KMS
+#   auto-unseal).
+# - No audit device, no snapshot automation yet.
 
 server:
   dev:
-    enabled: true
-    devRootToken: "root"
+    enabled: false
 
-  # Single replica is fine for dev mode; dev mode can't be HA anyway
-  # (it's in-memory storage, not Raft/Consul).
   standalone:
     enabled: false
 
   ha:
-    enabled: false
+    enabled: true
+    replicas: 1
+    raft:
+      enabled: true
+      setNodeId: true
+      config: |
+        ui = true
+
+        listener "tcp" {
+          address     = "[::]:8200"
+          cluster_address = "[::]:8201"
+          # TLS is a cloud-phase item (cert-manager); in-cluster plaintext
+          # for now, same trust assumption as every other in-cluster hop.
+          tls_disable = 1
+        }
+
+        storage "raft" {
+          path = "/vault/data"
+        }
+
+        service_registration "kubernetes" {}
+
+  dataStorage:
+    enabled: true
+    size: 1Gi
+    # kind's default StorageClass (standard / local-path). Survives node
+    # restarts because the data lives inside the kind node container's
+    # filesystem; deleted with the cluster.
+    storageClass: null
 
   resources:
     requests:
