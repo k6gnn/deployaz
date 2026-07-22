@@ -1,12 +1,12 @@
 {
   "name": "demo",
   "repoUrl": "platform",
-  "image": "ghcr.io/k6gnn/deployaz-demo:b6cbef48e5365614c0479ab0dce9f8d0a9708b2f",
+  "image": "ghcr.io/k6gnn/deployaz-demo:ea323f47677562e4e8a7e7250225df43b8f88aec",
   "port": 8080,
   "host": "demo.deployaz.local",
   "replicas": 2,
   "trivyScanPassed": "true",
-  "scannedSha": "b6cbef48e5365614c0479ab0dce9f8d0a9708b2f",
+  "scannedSha": "ea323f47677562e4e8a7e7250225df43b8f88aec",
   "healthPath": "/actuator/health",
   "healthPort": 8081,
   "metrics": {
