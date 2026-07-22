@@ -155,3 +155,38 @@ Running but 0/1 (sealed) -- run
 outside the repo). Vault-enabled tenant pods stuck in init recover on
 their own within ~1 min of unsealing. Full runbook:
 docs/PHASE46_VAULT_RAFT.md.
+
+### Incidents (2026-07-22 evening, Phase 4.5 part 2 -- Vault raft migration)
+
+**Dev -> raft is a reinstall boundary, not a helm upgrade.** Enabling raft
+adds volumeClaimTemplates to the vault StatefulSet -- an immutable field, so
+`helm upgrade` is rejected by the API server. Correct path: `helm uninstall`
++ fresh install. Cheap here because dev mode held nothing; on any future
+storage-shape change with real data, this becomes a snapshot-restore
+migration, not an uninstall.
+
+**Every helm upgrade of the vault release conflicts on the injector
+webhook's caBundle.** The injector's controller (field manager `vault-k8s`)
+continuously owns `.webhooks[].clientConfig.caBundle`; Helm's server-side
+apply refuses to touch it. Bit twice in one evening. Standing fix:
+`--force-conflicts` on every `helm upgrade vault ...` (safe -- the injector
+re-stamps the caBundle immediately).
+
+**Unseal-key recovery endpoints are 403-disabled by default on Vault 2.x.**
+`vault operator generate-root -init` (and rekey) returned `permission
+denied` with no token involved -- these historically unauthenticated
+endpoints are now gated behind the listener setting
+`disable_unauthed_rekey_endpoints = false`. Consequence discovered live: a
+lost/mangled root token was UNRECOVERABLE despite holding the unseal key,
+and the vault was rebuilt from scratch (acceptable: one synthetic secret,
+scripted setup). The flag is now set permanently in vault-values.yaml so
+the unseal-key -> new-root-token recovery path actually works; the flow
+remains gated by the unseal key + OTP. Lesson that transfers to cloud:
+REHEARSE recovery before you depend on it -- the first attempt at any
+recovery procedure fails on some default you didn't know existed.
+
+**Operator-error contribution, recorded without flattery:** the original
+root token was lost during an ad-hoc rotation (new token not verified
+saved before old one revoked). Rule going forward: after ANY credential
+rotation, verify the new credential works (`vault token lookup`) BEFORE
+revoking the old one. Rotation is a two-phase commit, not a swap.

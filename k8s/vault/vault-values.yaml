@@ -39,6 +39,7 @@ server:
         ui = true
 
         listener "tcp" {
+          disable_unauthed_rekey_endpoints = false
           address     = "[::]:8200"
           cluster_address = "[::]:8201"
           # TLS is a cloud-phase item (cert-manager); in-cluster plaintext

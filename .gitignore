@@ -6,3 +6,4 @@ target/
 .vscode/
 *.patch
 README_UPDATED.md
+vault-deployaz-keys.txt
