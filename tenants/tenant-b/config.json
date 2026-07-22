@@ -1,14 +1,22 @@
 {
   "name": "tenant-b",
   "repoUrl": "platform",
-  "image": "ghcr.io/k6gnn/deployaz-demo:9a40b4b22b65b9ff30f5f9a5d489257a832cb121",
+  "image": "ghcr.io/k6gnn/deployaz-demo:61cb707f82a26e0a3a76fd62e348c9e0b041ae5d",
   "port": 8080,
   "host": "tenant-b.deployaz.local",
   "replicas": 1,
   "trivyScanPassed": "true",
-  "scannedSha": "9a40b4b22b65b9ff30f5f9a5d489257a832cb121",
+  "scannedSha": "61cb707f82a26e0a3a76fd62e348c9e0b041ae5d",
   "healthPath": "/actuator/health",
   "healthPort": 8081,
-  "metrics": { "enabled": true, "port": 8081, "path": "/actuator/prometheus" },
-  "vault": { "enabled": false, "role": "", "secretPath": "" }
+  "metrics": {
+    "enabled": true,
+    "port": 8081,
+    "path": "/actuator/prometheus"
+  },
+  "vault": {
+    "enabled": false,
+    "role": "",
+    "secretPath": ""
+  }
 }
