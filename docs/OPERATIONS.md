@@ -91,3 +91,57 @@ In-memory storage; all secrets, policies, and auth config are lost on any
 restart, and k8s auth can break on apiserver restarts even without a Vault
 restart. Production-grade Vault (persistent storage, auto-unseal, real
 policies) is future work, documented since Phase 3.
+
+---
+
+## Phase 4.5 consolidation cutover -- incidents (2026-07-22)
+
+Three real failures during the cutover, all diagnosed live. Recorded because
+each one is a class of failure, not a one-off.
+
+### Incident: kubectl rejected the ApplicationSet -- go-template braces are invalid YAML
+`kubectl apply` failed with `invalid map key: {".port": nil}` on
+`port: {{ .port }}`. kubectl parses the manifest as YAML BEFORE ArgoCD ever
+sees the template, and an unquoted value starting with `{{` opens a YAML flow
+mapping. Fix: quote every templated value in the ApplicationSet -- which
+turns all values into strings post-render, so the chart now coerces types
+itself (`| int` for numbers, `eq (toString x) "true"` for booleans). The
+naive `{{- if .Values.x.enabled }}` is a trap: the STRING "false" is truthy
+in Go templates. Lesson: in ApplicationSet templates, quoting and chart-side
+type coercion are a package deal -- doing only the first silently inverts
+every boolean gate.
+
+### Incident: nginx admission webhook blocks same-host Ingress coexistence
+The planned zero-downtime overlap (old + new Ingress on the same host,
+nginx merges) does not survive the validating admission webhook: it rejects
+any Ingress whose host+path already exists ("already defined in ingress
+deployaz-demo/deployaz-demo"), so the new Application's sync failed
+repeatedly until the old Ingress was deleted. Cost: a few seconds of
+downtime per host at cutover. Lesson: "nginx merges duplicate hosts" is
+dataplane behavior; the ADMISSION layer forbids creating the duplicate in
+the first place. Any future migration that swaps Ingress objects for a live
+host must sequence delete-old before sync-new and accept the gap, or use a
+temporary secondary host.
+
+### Incident: orphaned quota starved the new ReplicaSet, then backoff hid the recovery
+The new demo pods (app + Vault sidecar, 320Mi/1CPU-limit each) could not be
+created because the ORPHANED tenant-a-quota (1.5 CPU / 1Gi requests) was
+still enforcing while the orphaned old pods consumed most of it --
+FailedCreate, quota exceeded. After deleting the old quota, pods STILL did
+not appear for several minutes: a ReplicaSet that failed creation enters
+exponential backoff (up to ~5 min between retries), so the fix looked like
+it hadn't worked. ArgoCD reported Degraded when the progress deadline
+expired -- a symptom timestamp, not a cause. Lesson: two quotas can enforce
+simultaneously in one namespace and the STRICTER one wins; and after fixing
+any FailedCreate cause, either wait out backoff or `kubectl rollout restart`
+to get a fresh ReplicaSet with a clean backoff slate. The RS events, not the
+Deployment status, name the actual blocker.
+
+### Observation: a stale ApplicationSet template renders plausible-looking wrong pods
+Between the consolidation push and the hotfix apply, the OLD in-cluster
+ApplicationSet (v1 template) picked up the new config files and rendered
+demo with v1 fields only -- producing a Running, Ready, 1/1 pod with no
+Vault sidecar and no metrics. Nothing was red; the pod was simply wrong.
+Lesson: the in-cluster ApplicationSet spec and the repo's chart must move
+together; when they diverge, the failure mode is silently degraded pods,
+not errors. Checking container COUNT (1/1 vs 2/2) caught it.
