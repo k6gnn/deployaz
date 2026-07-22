@@ -42,6 +42,8 @@ jobs:
     permissions:
       contents: write
       packages: write
+      # Keyless cosign signing (see ci-cd.yml for rationale)
+      id-token: write
     steps:
       - name: Validate inputs
         run: |
@@ -107,6 +109,19 @@ jobs:
           docker tag "local-tenant:${TENANT_SHA}" "$IMAGE"
           docker push "$IMAGE"
           echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+          DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "$IMAGE")
+          echo "DIGEST=$DIGEST" >> "$GITHUB_ENV"
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign the tenant image (keyless, workflow identity)
+        run: |
+          # Tenant images are signed by THIS platform workflow -- the
+          # admission policy trusts the platform's build identity, not the
+          # tenant. A tenant cannot self-sign around the Trivy gate because
+          # signing happens only after the scan step above passed.
+          cosign sign --yes "$DIGEST"
 
       - name: Write tenant registry entry and commit (this IS the deploy)
         run: |

@@ -1,0 +1,32 @@
+# Phase 4.5 part 3: signature verification at admission.
+#
+# Enforced ONLY in namespaces labeled policy.sigstore.dev/include=true --
+# which the tenant chart now stamps on every tenant namespace. Platform
+# namespaces are excluded on purpose (vendor images, vendor signatures).
+#
+# What this verifies: the image was signed KEYLESSLY by a GitHub Actions
+# workflow living in k6gnn/deployaz on the main branch. That identity is
+# only obtainable by our CI -- so unlike the Phase 3 annotation gate
+# (forgeable by anyone with repo write via config.json), this gate requires
+# actually having run our pipeline, whose signing step sits AFTER the Trivy
+# gate. The annotation constraint stays as defense in depth.
+apiVersion: policy.sigstore.dev/v1beta1
+kind: ClusterImagePolicy
+metadata:
+  name: deployaz-require-ci-signature
+spec:
+  images:
+    # Everything our registry entries can reference. Anything else
+    # (docker.io/nginx, etc.) matches no policy and is REJECTED outright in
+    # enforced namespaces -- deliberate: tenants run OUR builds, period.
+    - glob: "ghcr.io/k6gnn/**"
+  authorities:
+    - keyless:
+        url: https://fulcio.sigstore.dev
+        identities:
+          - issuer: https://token.actions.githubusercontent.com
+            # Anchored to this repo's workflows on main. Covers ci-cd.yml
+            # (platform image) and onboard-tenant.yml (tenant images).
+            subjectRegExp: "^https://github.com/k6gnn/deployaz/\\.github/workflows/.+@refs/heads/main$"
+      ctlog:
+        url: https://rekor.sigstore.dev

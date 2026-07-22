@@ -53,6 +53,10 @@ jobs:
     permissions:
       contents: write
       packages: write
+      # Required for keyless cosign signing: GitHub mints an OIDC token,
+      # Fulcio exchanges it for a short-lived signing cert bound to THIS
+      # workflow's identity. No signing key exists to store or leak.
+      id-token: write
     steps:
       - uses: actions/checkout@v4
 
@@ -94,11 +98,32 @@ jobs:
 
       - name: Tag and push scanned image
         if: success()
+        id: push
         run: |
           docker tag local-scan:${{ github.sha }} ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
           docker tag local-scan:${{ github.sha }} ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
           docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
           docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          # Capture the pushed DIGEST -- signatures bind to digests, not
+          # tags. Signing a tag would let a later force-pushed tag inherit
+          # the signature; signing the digest cannot be repointed.
+          DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }})
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+
+      - name: Install cosign
+        if: success()
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign the image (keyless, workflow identity)
+        if: success()
+        run: |
+          # --yes: non-interactive consent to upload to the Rekor public
+          # transparency log. The signature is verified at ADMISSION by the
+          # sigstore policy-controller (k8s/policy-controller/) -- this
+          # replaces "trust the annotation CI wrote" with "verify a
+          # cryptographic identity", closing the gap documented since
+          # Phase 3.
+          cosign sign --yes "${{ steps.push.outputs.digest }}"
 
       - name: Update tenant registry with new image tag and scan status
         if: success()

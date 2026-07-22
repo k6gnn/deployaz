@@ -7,3 +7,9 @@ metadata:
     deployaz.io/tenant: {{ .Values.tenant.name | quote }}
     # Gatekeeper's Trivy-scan constraint selects namespaces by this label.
     deployaz.io/tenant-workloads: "true"
+    # Sigstore policy-controller enforces signature verification ONLY in
+    # namespaces carrying this label (Phase 4.5 part 3). Platform
+    # namespaces (vault, monitoring, argocd...) are deliberately excluded:
+    # their images are third-party and signed by their own vendors, not
+    # our CI.
+    policy.sigstore.dev/include: "true"
