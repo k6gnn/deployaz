@@ -2,68 +2,70 @@
 
 A multi-tenant deployment platform, built in public. Real production shape at
 every stage - CI, containerization, GitOps, monitoring, isolation, secrets
-management, and supply-chain security - proven end-to-end with real
-verification at each step, not assumed.
+management, supply-chain security, and self-service onboarding - proven
+end-to-end with real verification at each step, not assumed.
 
 ## Structure
 ```
-app/            Spring Boot demo service (the "tenant" workload)
-k8s/base/       Tenant-a manifests -- this is what ArgoCD watches
-k8s/tenants/    Additional tenant(s) -- tenant-b is synthetic, proving
-                platform isolation rather than app diversity
+app/            Spring Boot demo service (the original "tenant" workload)
+charts/tenant/  Generic tenant Helm chart -- one chart, N tenants; every
+                tenant gets the full isolation layer automatically
+tenants/        Tenant registry -- one config.json per onboarded tenant,
+                written ONLY by the onboarding workflow after a clean scan
+k8s/base/       Tenant-a manifests -- what ArgoCD watches
+k8s/tenants/    Hand-written tenant-b (kept as the pre-Phase-4 shape)
 k8s/vault/      Vault install values + one-time setup script
-k8s/gatekeeper/ Admission-time policy: blocks unscanned images
-gitops/         ArgoCD Application definitions
-docs/           Setup + verification instructions per phase
+k8s/gatekeeper/ Admission-time policy: blocks unscanned images (label-based)
+k8s/logging/    Loki + Promtail values (centralized logs, all pods)
+gitops/         ArgoCD Application + ApplicationSet definitions
+docs/           Setup + verification instructions per phase, and the
+                operations runbook (OPERATIONS.md) with every real
+                incident and its root cause
 ```
 
 ## Status
-**Phases 1-3 complete.** Single-tenant pipeline, two isolated tenants,
-secrets management, CVE scanning, and admission-time policy enforcement -
-all built and verified against a real cluster, not just written. Not yet
-self-service (Phase 4).
+**Phases 1-4 complete and verified.** Phase 4's full battery -- onboarding
+(including a real Trivy rejection of a vulnerable first image), Gatekeeper
+admission, RBAC/network/quota isolation on the auto-created tenant,
+centralized logs, Git-driven teardown, re-onboarding -- was executed
+against the live cluster. Record: `docs/PHASE4_SETUP.md`. Operational
+incidents and their root causes: `docs/OPERATIONS.md`.
+Next phase: cloud migration (real cluster, domain, TLS) -- the operational
+failures documented in OPERATIONS.md are its justification.
 
-## Setup
-- `docs/PHASE1_SETUP.md` -- cluster creation, ArgoCD install, monitoring
-  stack, and how to verify the full CI/CD loop actually works.
-- `docs/PHASE3_SETUP.md` -- Vault install + verification, CI security gates
-  (gitleaks + Trivy), and Gatekeeper admission policy + verification.
-- **Note:** a `PHASE2_SETUP.md` was discussed but never actually committed
-  to this repo -- that's a real gap, not an oversight to gloss over. The
-  Phase 2 work itself (tenant-b isolation: namespaces, RBAC, NetworkPolicies,
-  ResourceQuotas) is live and proven in the cluster and reflected in
-  `k8s/tenants/tenant-b/`, but its own setup doc should still get written.
+## Setup docs
+- `docs/PHASE1_SETUP.md` -- cluster, ArgoCD, monitoring, full CI/CD loop
+- `docs/PHASE2_SETUP.md` -- multi-tenancy + the four isolation proofs
+- `docs/PHASE3_SETUP.md` -- Vault, CI security gates, Gatekeeper policy
+- `docs/PHASE4_SETUP.md` -- self-service onboarding, Loki, and the
+  verification steps that separate "automation exists" from "automation
+  is safe"
 
 ## What's actually proven, not just claimed
 - Single-tenant app, GitOps-managed, monitored (Phase 1)
 - Two isolated tenants on one cluster -- RBAC, NetworkPolicy, ResourceQuota,
-  all confirmed with real `kubectl` evidence, not just "looks right" (Phase 2)
+  confirmed with real kubectl evidence (Phase 2)
 - Vault-backed secrets: not in Git, injected at runtime, fail-fast if
-  missing, isolated per tenant, internal-only visibility (Phase 3)
-- CI security gates: gitleaks (secret scanning) and Trivy (CVE scanning) --
-  Trivy has already caught and blocked a real batch of CVEs in outdated
-  dependencies, not just a synthetic test (Phase 3)
-- Gatekeeper admission policy: confirmed to actually reject a manifest
-  missing a valid scan annotation, with a real denial message from the
-  apiserver (Phase 3)
+  missing, isolated per tenant (Phase 3)
+- CI security gates: gitleaks + Trivy -- Trivy has caught and blocked a real
+  batch of CVEs, not just a synthetic test (Phase 3)
+- Gatekeeper admission policy: confirmed to reject a manifest missing a
+  valid scan annotation (Phase 3)
+- Phase 4, verified end-to-end: repo URL -> built, scanned, deployed,
+  isolated, log-shipping app with zero manual Kubernetes steps -- and the
+  scan gate refused a genuinely vulnerable image on its first live run
+- Full teardown via Git delete, and clean re-onboarding, both verified
 
 ## Known, honest limitations (not hidden)
-- Vault runs in **dev mode** (in-memory, auto-unsealed, fixed root token) --
-  proves the pattern, not production-grade. Real production needs a proper
-  storage backend, cloud KMS auto-unseal, and TLS.
-- Gatekeeper's policy trusts a CI-written annotation, not a cryptographic
-  signature. The real hardening step is image signing (cosign) verified
-  directly against the registry.
-- Spring Boot is pinned to `3.5.16`, the final patch of an now-EOL branch --
-  this bought time by fixing real CVEs, it didn't permanently solve the
-  problem. A deliberate Spring Boot 4.x migration is separate future work,
-  not something to fold into a security-hardening phase.
-
-## Roadmap
-1. Single app, full pipeline, GitOps, monitored -- **done**
-2. Second synthetic tenant + isolation (namespaces, RBAC, NetworkPolicies,
-   quotas) -- **done**
-3. Secrets management (Vault) + image scanning (Trivy) + policy enforcement
-   (OPA/Gatekeeper) -- **done**
-4. Self-service: client submits a repo URL, gets a deployed and monitored
-   app back, zero manual steps -- **next**
+- Runs on a local kind cluster: the free tier is NOT publicly reachable yet.
+  Cloud migration (real cluster, domain, cert-manager TLS) is its own
+  future phase with real monthly cost.
+- Onboarding is operator-triggered (workflow_dispatch), deliberately, while
+  the cluster is a laptop. The pipeline after the trigger is zero-touch.
+- Vault runs in dev mode -- proves the pattern, not production-grade.
+- Gatekeeper trusts a CI-written annotation, not a cryptographic signature;
+  cosign image signing is the documented hardening step.
+- No automatic rebuild when a tenant's repo changes (webhook trigger is
+  future work). Public repos with a Dockerfile only.
+- Spring Boot pinned to 3.5.16 (EOL branch, final patch) -- a deliberate
+  4.x migration is separate future work.

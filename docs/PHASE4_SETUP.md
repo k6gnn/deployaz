@@ -159,3 +159,35 @@ prune/ownership is misconfigured -- fix before claiming "self-service."
 - TCP-only health probes for tenant apps (no universal HTTP path exists).
 - Operator-triggered onboarding; public self-serve UI needs the cloud
   migration first.
+
+## Verification record (2026-07-21/22, real cluster)
+
+Every claim above was executed against the live cluster, not assumed:
+
+- **Trivy gate, failure path**: first real onboarding attempt (sample) was
+  REFUSED — 1 CRITICAL + 4 HIGH CVEs in the base image's bundled npm
+  tooling. Nothing pushed, nothing committed, no namespace created. Fixed
+  by stripping npm from the tenant's runtime image; second run passed.
+- **End-to-end**: repo URL → built → scanned → pushed → config committed →
+  ApplicationSet provisioned namespace/RBAC/quota/limits/netpols/deploy/
+  svc/ingress → `curl http://sample.deployaz.local/` returned the app's
+  JSON. Zero manual Kubernetes steps.
+- **Gatekeeper (label-based match)**: re-verified after the match-mechanism
+  change — patching the scan annotation to "false" was denied by the
+  admission webhook.
+- **RBAC**: `kubectl auth can-i list pods -n deployaz-tenant-b --as=system:serviceaccount:deployaz-sample:tenant-sample-sa` → `no`.
+- **Network**: curl to sample's service from a default-namespace pod (with
+  sample's pod verified alive first) → timeout. Only ingress-nginx and
+  monitoring are admitted.
+- **Quota**: scaling sample to 20 replicas → `exceeded quota: tenant-quota`
+  FailedCreate events (CPU/memory ceiling bit first, at 6 pods). Bonus:
+  ArgoCD selfHeal reverted the manual scale to 1 within ~10 seconds.
+- **Logs**: `{namespace="deployaz-sample"}` in Grafana/Loki showed the
+  tenant's stdout with zero tenant-side logging integration.
+- **Teardown**: deleting `tenants/sample/` from Git removed the entire
+  tenant including the Namespace object (allow ArgoCD's ~3-minute git poll
+  before judging it stuck — this was misread as a leak once).
+- **Re-onboarding**: the offboard → onboard cycle repeated cleanly.
+
+Incidents encountered and fixed during verification are documented with
+root causes in `docs/OPERATIONS.md`.

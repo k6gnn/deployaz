@@ -25,6 +25,13 @@ spec:
   template:
     metadata:
       name: "tenant-{{ .name }}"
+      # Hardening added post-verification: makes Application deletion cascade
+      # deterministically to all child resources. Teardown was verified to
+      # work without it (ArgoCD prune removed everything incl. the namespace,
+      # just slower than the initial watch suggested), but the finalizer
+      # removes the ambiguity.
+      finalizers:
+        - resources-finalizer.argocd.argoproj.io
       labels:
         deployaz.io/tenant: "{{ .name }}"
     spec:
