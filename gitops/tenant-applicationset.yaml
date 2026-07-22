@@ -27,6 +27,11 @@ spec:
         revision: main
         files:
           - path: "tenants/*/config.json"
+  # NOTE (found the hard way): every templated value below is quoted, because
+  # kubectl's YAML parser rejects a value starting with "{{". Quoting means
+  # ALL values reach the chart as strings -- the chart therefore coerces
+  # types itself (int for numbers, toString-comparison for booleans). Do not
+  # "clean up" the quotes or the un-coerced conditionals come back.
   template:
     metadata:
       name: "tenant-{{ .name }}"
@@ -45,19 +50,19 @@ spec:
             tenant:
               name: "{{ .name }}"
               image: "{{ .image }}"
-              port: {{ .port }}
+              port: "{{ .port }}"
               host: "{{ .host }}"
-              replicas: {{ .replicas }}
+              replicas: "{{ .replicas }}"
               trivyScanPassed: "{{ .trivyScanPassed }}"
               scannedSha: "{{ .scannedSha }}"
               healthPath: "{{ .healthPath }}"
-              healthPort: {{ .healthPort }}
+              healthPort: "{{ .healthPort }}"
               metrics:
-                enabled: {{ .metrics.enabled }}
-                port: {{ .metrics.port }}
+                enabled: "{{ .metrics.enabled }}"
+                port: "{{ .metrics.port }}"
                 path: "{{ .metrics.path }}"
               vault:
-                enabled: {{ .vault.enabled }}
+                enabled: "{{ .vault.enabled }}"
                 role: "{{ .vault.role }}"
                 secretPath: "{{ .vault.secretPath }}"
       destination:

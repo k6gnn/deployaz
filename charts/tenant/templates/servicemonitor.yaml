@@ -1,4 +1,4 @@
-{{- if .Values.tenant.metrics.enabled }}
+{{- if eq (toString .Values.tenant.metrics.enabled) "true" }}
 # Requires kube-prometheus-stack's CRDs (installed since Phase 1). Only
 # rendered for tenants that opted into metrics -- logs, by contrast, need
 # nothing from the tenant (Promtail ships every pod's stdout).

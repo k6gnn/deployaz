@@ -12,7 +12,7 @@ spec:
     - name: http
       port: 80
       targetPort: {{ .Values.tenant.port | int }}
-{{- if .Values.tenant.metrics.enabled }}
+{{- if eq (toString .Values.tenant.metrics.enabled) "true" }}
     - name: management
       port: {{ .Values.tenant.metrics.port | int }}
       targetPort: {{ .Values.tenant.metrics.port | int }}
