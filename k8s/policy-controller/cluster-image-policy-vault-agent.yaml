@@ -1,0 +1,17 @@
+apiVersion: policy.sigstore.dev/v1beta1
+kind: ClusterImagePolicy
+metadata:
+  annotations:
+    kubectl.kubernetes.io/last-applied-configuration: |
+      {"apiVersion":"policy.sigstore.dev/v1beta1","kind":"ClusterImagePolicy","metadata":{"annotations":{},"name":"deployaz-passlist-vault-agent"},"spec":{"authorities":[{"static":{"action":"pass"}}],"images":[{"glob":"index.docker.io/hashicorp/vault*"}]}}
+  finalizers:
+  - clusterimagepolicies.policy.sigstore.dev
+  name: deployaz-passlist-vault-agent
+spec:
+  authorities:
+  - name: authority-0
+    static:
+      action: pass
+  images:
+  - glob: index.docker.io/hashicorp/vault*
+  mode: enforce
