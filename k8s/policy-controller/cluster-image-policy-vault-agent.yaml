@@ -1,16 +1,19 @@
+# Phase 4.5 part 3: the Vault Agent Injector mutates tenant pods, adding an
+# init container and sidecar running hashicorp/vault -- images matching NO
+# ClusterImagePolicy and therefore rejected, which blocked every
+# vault-enabled tenant rollout (found live, 2026-07-22).
+#
+# This pass-lists exactly the injector's agent image. Safe: tenants cannot
+# choose that image -- it is cluster-side injector configuration. Verifying
+# HashiCorp's own signatures instead of pass-listing is a cloud-phase
+# refinement, noted, not silently skipped.
 apiVersion: policy.sigstore.dev/v1beta1
 kind: ClusterImagePolicy
 metadata:
-  annotations:
-      {"apiVersion":"policy.sigstore.dev/v1beta1","kind":"ClusterImagePolicy","metadata":{"annotations":{},"name":"deployaz-passlist-vault-agent"},"spec":{"authorities":[{"static":{"action":"pass"}}],"images":[{"glob":"index.docker.io/hashicorp/vault*"}]}}
-  finalizers:
-  - clusterimagepolicies.policy.sigstore.dev
   name: deployaz-passlist-vault-agent
 spec:
-  authorities:
-  - name: authority-0
-    static:
-      action: pass
   images:
-  - glob: index.docker.io/hashicorp/vault*
-  mode: enforce
+    - glob: "index.docker.io/hashicorp/vault*"
+  authorities:
+    - static:
+        action: pass

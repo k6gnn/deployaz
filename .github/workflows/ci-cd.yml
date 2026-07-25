@@ -135,7 +135,15 @@ jobs:
           # image (tenant-b is synthetic, proving platform isolation rather
           # than app diversity), so both entries get the bump, or tenant-b
           # silently stops receiving updates.
-          IMG="${REGISTRY}/${IMAGE_NAME}:${{ github.sha }}"
+          # Phase 4.5 part 3 fix: pin tag AND digest in the registry entry.
+          # The policy-controller's mutating webhook resolves live images to
+          # tag@digest form; with git carrying only the tag, every tenant
+          # Deployment was PERMANENTLY OutOfSync (desired != mutated live).
+          # Writing tag@digest makes git the exact truth, kills the drift,
+          # and pins the supply chain to the byte level. The Gatekeeper rego
+          # already parses this form (fixed earlier this phase).
+          DIGEST_REF=$(docker inspect --format='{{index .RepoDigests 0}}' ${REGISTRY}/${IMAGE_NAME}:${{ github.sha }})
+          IMG="${REGISTRY}/${IMAGE_NAME}:${{ github.sha }}@${DIGEST_REF#*@}"
           for t in demo tenant-b; do
             jq --arg img "$IMG" --arg sha "${{ github.sha }}" \
               '.image = $img | .scannedSha = $sha | .trivyScanPassed = "true"' \

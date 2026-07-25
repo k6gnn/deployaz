@@ -111,6 +111,10 @@ jobs:
           echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
           DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "$IMAGE")
           echo "DIGEST=$DIGEST" >> "$GITHUB_ENV"
+          # Registry entry carries tag@digest (see ci-cd.yml for rationale:
+          # matches the policy-controller's mutation, kills permanent
+          # ArgoCD drift, byte-level supply-chain pin).
+          echo "IMAGE=${IMAGE}@${DIGEST#*@}" >> "$GITHUB_ENV"
 
       - name: Install cosign
         uses: sigstore/cosign-installer@v3
