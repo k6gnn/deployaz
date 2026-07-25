@@ -1,7 +1,7 @@
 {
   "name": "sample",
   "repoUrl": "https://github.com/k6gnn/sample-tenant-app",
-  "image": "ghcr.io/k6gnn/deployaz-tenant-sample:5ca13614f894",
+  "image": "ghcr.io/k6gnn/deployaz-tenant-sample:5ca13614f894@sha256:1acd5b2efe7f37f77c386cd7a67c87bc13ae444217f11d59dffe04e396eb2abd",
   "port": 8080,
   "host": "sample.deployaz.local",
   "replicas": 1,
