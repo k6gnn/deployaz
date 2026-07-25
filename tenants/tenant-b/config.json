@@ -1,12 +1,12 @@
 {
   "name": "tenant-b",
   "repoUrl": "platform",
-  "image": "ghcr.io/k6gnn/deployaz-demo:ea323f47677562e4e8a7e7250225df43b8f88aec",
+  "image": "ghcr.io/k6gnn/deployaz-demo:cd0d6cba7a7d8944d7b5cd572c2467ef3a683671@sha256:4c4cb01b45a8fc1cbc48b96434fba127366d20ab4ed48d18571bf8a187eeb15d",
   "port": 8080,
   "host": "tenant-b.deployaz.local",
   "replicas": 1,
   "trivyScanPassed": "true",
-  "scannedSha": "ea323f47677562e4e8a7e7250225df43b8f88aec",
+  "scannedSha": "cd0d6cba7a7d8944d7b5cd572c2467ef3a683671",
   "healthPath": "/actuator/health",
   "healthPort": 8081,
   "metrics": {
