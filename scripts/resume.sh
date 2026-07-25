@@ -25,7 +25,7 @@ done
 step "Vault seal status"
 if kubectl exec -n vault vault-0 -- vault status 2>/dev/null | grep -q "Sealed *true"; then
   [ -f "$KEYFILE" ] || { echo "FATAL: sealed, and no key file at $KEYFILE"; exit 1; }
-  KEY=$(grep -oE '[A-Za-z0-9+/]{40,}={0,2}' "$KEYFILE" | head -1)
+  KEY=$(grep -v "hvs\." "$KEYFILE" | grep -oE '[A-Za-z0-9+/]{40,}={0,2}' | head -1)
   [ -n "$KEY" ] || { echo "FATAL: no key-looking string found in $KEYFILE"; exit 1; }
   echo "Sealed -- unsealing from $KEYFILE"
   kubectl exec -n vault vault-0 -- vault operator unseal "$KEY" | grep -E "Sealed|HA Mode"
