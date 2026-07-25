@@ -50,7 +50,7 @@ step "Policy-controller (fail-close dependency -- if this is down, no tenant rol
 kubectl get pods -n cosign-system --no-headers
 
 step "Smoke: demo secret path end-to-end"
-kubectl exec -n deployaz-demo deploy/demo -c app -- cat /vault/secrets/db-password >/dev/null 2>&1 \
+kubectl exec -n deployaz-demo deploy/demo -c app -- cat //vault/secrets/db-password >/dev/null 2>&1 \
   && echo "  vault->tenant secret path: OK" \
   || echo "  WARN: demo secret read failed -- if pods are mid-restart give it a minute, else investigate"
 
