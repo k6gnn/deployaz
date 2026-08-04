@@ -31,17 +31,16 @@ admission, RBAC/network/quota isolation on the auto-created tenant,
 centralized logs, Git-driven teardown, re-onboarding -- was executed
 against the live cluster. Record: `docs/PHASE4_SETUP.md`. Operational
 incidents and their root causes: `docs/OPERATIONS.md`.
-**Phase 4.5 (pre-cloud hardening, part 1: consolidation) applied.** The
-three parallel tenant implementations (hand-written k8s/base, hand-written
-k8s/tenants/tenant-b, and the chart) are collapsed into one: every tenant is
-a registry entry rendered through charts/tenant. Found and fixed during
-consolidation: the Phase 4 chart never denied egress -- onboarded tenants
-had unrestricted network egress. The chart now enforces the full Phase 2
-posture for every tenant. Record and cutover procedure:
-`docs/PHASE45_CONSOLIDATION.md`.
-Next: pre-cloud hardening part 2 (Vault raft mode) and part 3 (cosign),
-then cloud migration (real cluster, domain, TLS) -- the operational
-failures documented in OPERATIONS.md are its justification.
+
+**Phase 4.5 complete (parts 1-3): pre-cloud hardening.** Single tenant
+shape (charts/tenant, one registry, no more parallel implementations),
+egress enforced for every tenant, Vault on raft with persistent storage,
+cosign-signed images verified at admission, digest-pinned GitOps. Details:
+`docs/PHASE45_CONSOLIDATION.md`, `docs/PHASE46_VAULT_RAFT.md`,
+`docs/PHASE47_COSIGN.md`, and the incident log in `docs/OPERATIONS.md`.
+
+Next: cloud migration (real cluster, domain, TLS, AUP) -- the operational
+failures documented in OPERATIONS.md are its justification
 
 ## Setup docs
 - `docs/PHASE1_SETUP.md` -- cluster, ArgoCD, monitoring, full CI/CD loop
